@@ -157,6 +157,78 @@ class FairinoInterface:
             print(f"[get_inverse_kinematics] Failed to get inverse kinematics: {exception}")
             return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
+    def movej(
+        self, j1: float, j2: float, j3: float, j4: float, j5: float, j6: float,
+        vel: float = 20.0
+    ) -> bool:
+        """! Move the robot to the specified joint angles.
+        @param j1<float>: Joint 1 angle in degrees.
+        @param j2<float>: Joint 2 angle in degrees.
+        @param j3<float>: Joint 3 angle in degrees.
+        @param j4<float>: Joint 4 angle in degrees.
+        @param j5<float>: Joint 5 angle in degrees.
+        @param j6<float>: Joint 6 angle in degrees.
+        @param vel<float>: Velocity percentage [0-100]. Default 20.0.
+        @return<bool>: True if move is successful, False otherwise.
+        """
+        if self._debug:
+            time.sleep(1)
+            return True
+        j1, j2, j3, j4, j5, j6, vel = (
+            float(j1),
+            float(j2),
+            float(j3),
+            float(j4),
+            float(j5),
+            float(j6),
+            float(vel),
+        )
+        try:
+            ret = self.robot.MoveJ([j1, j2, j3, j4, j5, j6], 0, 0, vel=vel)
+            if ret != 0:
+                raise Exception(f"MoveJ error: {ret}")
+        except Exception as exception:
+            print(f"[movej] Failed to move robot: {exception}")
+            return False
+        print(f"[movej] Moved to joints: {j1}, {j2}, {j3}, {j4}, {j5}, {j6}")
+        return True
+
+    def movel(
+        self, x: float, y: float, z: float, rx: float, ry: float, rz: float,
+        vel: float = 20.0
+    ) -> bool:
+        """! Move the robot linearly to the specified Cartesian pose.
+        @param x<float>: X coordinate in mm.
+        @param y<float>: Y coordinate in mm.
+        @param z<float>: Z coordinate in mm.
+        @param rx<float>: Rotation around X axis in degrees.
+        @param ry<float>: Rotation around Y axis in degrees.
+        @param rz<float>: Rotation around Z axis in degrees.
+        @param vel<float>: Velocity percentage [0-100]. Default 20.0.
+        @return<bool>: True if move is successful, False otherwise.
+        """
+        if self._debug:
+            time.sleep(1)
+            return True
+        x, y, z, rx, ry, rz, vel = (
+            float(x),
+            float(y),
+            float(z),
+            float(rx),
+            float(ry),
+            float(rz),
+            float(vel),
+        )
+        try:
+            ret = self.robot.MoveL([x, y, z, rx, ry, rz], 0, 0, vel=vel)
+            if ret != 0:
+                raise Exception(f"MoveL error: {ret}")
+        except Exception as exception:
+            print(f"[movel] Failed to move robot: {exception}")
+            return False
+        print(f"[movel] Moved to position: {x}, {y}, {z}, {rx}, {ry}, {rz}")
+        return True
+
     def is_opened(self):
         """! Check if the fairino interface is opened.
         @return<bool>: True if opened, False otherwise.
