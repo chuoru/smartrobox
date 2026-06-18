@@ -1,0 +1,107 @@
+@startuml sequence_lifecycle
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam sequenceMessageAlign left
+skinparam noteBackgroundColor #FFFDE7
+skinparam noteBorderColor #CCCCCC
+
+title Action Lifecycle — Start / Pause / Resume / Done
+
+actor Caller
+participant "action : BaseAction" as A
+participant "_thread_entry" as T <<thread>>
+participant "_run() impl" as R <<subclass>>
+participant "controller : Controller" as C
+participant "device : DeviceInterface" as D
+
+== Start ==
+
+Caller -> A: start()
+activate A
+A -> A: _state = RUNNING\n_done_event.clear()
+A ->> T: spawn daemon thread
+A --> Caller: True
+deactivate A
+
+activate T
+T -> R: _run()
+activate R
+
+== Step 1: device call ==
+
+R -> A: _call("arm", "movel", x, y, z, ...)
+activate A
+A -> C: execute("arm", "movel", x, y, z, ...)
+activate C
+C -> D: movel(x, y, z, ...)
+activate D
+D --> C: True
+deactivate D
+C --> A: True
+deactivate C
+A --> R: True
+deactivate A
+
+== Step 1: checkpoint (not paused) ==
+
+R -> A: _checkpoint()
+activate A
+A -> A: _pause_event.wait()\n[event is set → returns immediately]
+A --> R: True  (continue)
+deactivate A
+
+== Pause requested ==
+
+Caller -> A: pause()
+activate A
+A -> A: _state = PAUSED\n_pause_event.clear()
+A --> Caller: True
+deactivate A
+
+== Step 2: device call (completes normally) ==
+
+R -> A: _call("hand", "move", pose)
+activate A
+A -> C: execute("hand", "move", pose)
+activate C
+C -> D: move(pose)
+activate D
+D --> C: True
+deactivate D
+C --> A: True
+deactivate C
+A --> R: True
+deactivate A
+
+== Step 2: checkpoint (paused — blocks) ==
+
+R -> A: _checkpoint()
+activate A
+A -> A: _pause_event.wait()\n[event is clear → BLOCKS]
+note over A, R: Thread suspended here until resume()
+
+== Resume ==
+
+Caller -> A: resume()
+activate Caller
+A -> A: _state = RUNNING\n_pause_event.set()
+note over A: _pause_event.wait() unblocks
+A --> R: True  (continue)
+deactivate Caller
+deactivate A
+
+== Completion ==
+
+R --> T: return result
+deactivate R
+
+T -> A: [under lock] _state = DONE
+T -> A: _done_event.set()
+deactivate T
+
+Caller -> A: wait(timeout=5.0)
+activate A
+A --> Caller: True  (DONE within timeout)
+deactivate A
+
+@enduml

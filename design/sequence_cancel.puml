@@ -1,0 +1,74 @@
+@startuml sequence_cancel
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam sequenceMessageAlign left
+skinparam noteBackgroundColor #FFFDE7
+skinparam noteBorderColor #CCCCCC
+
+title Action Lifecycle — Cancel (cooperative)
+
+actor Caller
+participant "action : BaseAction" as A
+participant "_thread_entry" as T <<thread>>
+participant "_run() impl" as R <<subclass>>
+participant "device : DeviceInterface" as D
+
+== Start ==
+
+Caller -> A: start()
+A -> A: _state = RUNNING
+A ->> T: spawn daemon thread
+A --> Caller: True
+
+activate T
+T -> R: _run()
+activate R
+
+== Step 1: long device call in progress ==
+
+R -> A: _call("arm", "movel", ...)
+activate A
+note over A, D: Blocking hardware call — cannot be preempted mid-call
+A -> D: movel(...)
+activate D
+
+== Cancel arrives during device call ==
+
+Caller -> A: cancel()
+activate Caller
+A -> A: _cancelled = True\n_pause_event.set()
+A --> Caller: True
+deactivate Caller
+
+D --> A: True  (call eventually returns)
+deactivate D
+A --> R: True
+deactivate A
+
+== Checkpoint detects cancellation ==
+
+R -> A: _checkpoint()
+activate A
+A -> A: _pause_event.wait()\n[set → returns immediately]
+A --> R: False  (_cancelled = True)
+deactivate A
+
+note over R: Subclass checks return value\nand returns early from _run()
+R --> T: return  (early exit)
+deactivate R
+
+== Thread sets terminal state ==
+
+T -> A: [under lock] _state = CANCELLED
+T -> A: _done_event.set()
+deactivate T
+
+== Caller observes result ==
+
+Caller -> A: wait(timeout=1.0)
+A --> Caller: False  (state is CANCELLED, not DONE)
+
+Caller -> A: state()
+A --> Caller: ActionState.CANCELLED
+
+@enduml

@@ -1,0 +1,145 @@
+@startuml system
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam classBackgroundColor #FFFFFF
+skinparam classBorderColor #888888
+skinparam packageBorderColor #AAAAAA
+skinparam arrowColor #555555
+skinparam noteBackgroundColor #FFFDE7
+skinparam noteBorderColor #CCCCCC
+
+package "actions" {
+    class BaseAction {
+        -_controller : Controller
+        -_state : ActionState
+        -_lock : threading.Lock
+        -_pause_event : threading.Event
+        -_done_event : threading.Event
+        -_cancelled : bool
+        -_thread : Thread | None
+        -_result : object
+        -_error : Exception | None
+        --
+        +start() : bool
+        +pause() : bool
+        +resume() : bool
+        +cancel() : bool
+        +wait(timeout : float | None) : bool
+        +state() : ActionState
+        +result() : object
+        +error() : Exception | None
+        ..protected..
+        #_run()
+        #_checkpoint() : bool
+        #_call(device, method, *args) : object
+        ..private..
+        -_thread_entry()
+    }
+
+    enum ActionState {
+        IDLE
+        RUNNING
+        PAUSED
+        DONE
+        FAILED
+        CANCELLED
+    }
+}
+
+package "app" {
+    class Controller {
+        -_registry : dict[str, _DeviceEntry]
+        -_lock : threading.Lock
+        --
+        +open(device_name : str) : bool
+        +close(device_name : str) : bool
+        +open_all() : dict[str, bool]
+        +close_all() : dict[str, bool]
+        +list_devices() : list[str]
+        +status(device_name : str) : dict
+        +execute(device_name, method, *args) : object
+    }
+
+    class _DeviceEntry <<dataclass>> {
+        +name : str
+        +type : str
+        +instance : object
+    }
+}
+
+package "devices" {
+    interface DeviceInterface <<abstract>> {
+        +open() : bool
+        +close() : bool
+        +is_opened() : bool
+    }
+
+    class FairinoInterface {
+        -_robot : Robot
+        -_debug : bool
+        --
+        +open() : bool
+        +close()
+        +is_opened() : bool
+        +movej(j1..j6 : float, vel : float) : bool
+        +movel(x,y,z,rx,ry,rz : float, vel : float) : bool
+        +move(x,y,z,rx,ry,rz : float) : bool
+        +tpos() : tuple[int, list[float]]
+        +get_inverse_kinematics(...) : tuple
+    }
+
+    class LinkerbotInterface {
+        -_api : LinkerHandApi
+        -_debug : bool
+        --
+        +open() : bool
+        +close()
+        +is_opened() : bool
+        +move(pose : list[int]) : bool
+        +set_speed(speed : list[int]) : bool
+        +set_torque(torque : list[int]) : bool
+        +get_state() : list[int]
+        +get_touch() : list[int]
+        +get_force() : list
+        +get_fault() : list
+        +clear_faults() : bool
+    }
+
+    class OrbbecInterface {
+        -_thread : Thread
+        -_running : bool
+        -_lock : threading.Lock
+        -_color_frame : ndarray | None
+        -_depth_frame : ndarray | None
+        --
+        +start() : bool
+        +stop()
+        +is_alive() : bool
+        +get_color_frame() : ndarray | None
+        +get_depth_frame() : ndarray | None
+        +pixel_to_world(u, v : int) : tuple[float,float,float]
+        -_capture_loop()
+    }
+}
+
+BaseAction --> Controller : dispatches via _call()
+BaseAction *-- ActionState : owns
+Controller *-- "_DeviceEntry\n(registry)" : manages
+Controller --> DeviceInterface : execute() dispatches to
+FairinoInterface ..|> DeviceInterface
+LinkerbotInterface ..|> DeviceInterface
+OrbbecInterface ..|> DeviceInterface
+
+note right of BaseAction
+  Subclass overrides _run().
+  Calls _checkpoint() between steps
+  for cooperative pause/cancel.
+end note
+
+note right of Controller
+  _DEVICE_FACTORIES maps
+  type string → class constructor.
+  Registry built from device.yaml.
+end note
+
+@enduml
