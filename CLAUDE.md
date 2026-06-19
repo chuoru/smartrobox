@@ -1,5 +1,17 @@
 # CLAUDE.md — Project Conventions
 
+## Environment
+
+Use the `smartrobox` conda environment for all development and testing:
+
+```bash
+conda activate smartrobox
+```
+
+Python version: **3.11**
+
+---
+
 ## Python Coding Style
 
 All Python files in this project follow the style established in `server/app/plc_app.py`.
