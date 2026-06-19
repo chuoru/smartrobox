@@ -83,6 +83,18 @@ class TestStepDataclasses(unittest.TestCase):
     def test_movej_step_custom_vel(self):
         self.assertEqual(MoveJStep(0, 0, 0, 0, 0, 0, vel=50.0).vel, 50.0)
 
+    def test_movej_step_default_tool_offset_is_none(self):
+        self.assertIsNone(MoveJStep(0, 0, 0, 0, 0, 0).tool_offset)
+
+    def test_movej_step_default_base_offset_is_none(self):
+        self.assertIsNone(MoveJStep(0, 0, 0, 0, 0, 0).base_offset)
+
+    def test_movej_step_custom_tool_offset(self):
+        self.assertEqual(MoveJStep(0, 0, 0, 0, 0, 0, tool_offset=[1, 2, 3, 4, 5, 6]).tool_offset, [1, 2, 3, 4, 5, 6])
+
+    def test_movej_step_custom_base_offset(self):
+        self.assertEqual(MoveJStep(0, 0, 0, 0, 0, 0, base_offset=[7, 8, 9, 0, 0, 0]).base_offset, [7, 8, 9, 0, 0, 0])
+
     def test_movel_step_stores_all_fields(self):
         s = MoveLStep(10.0, 20.0, 30.0, 1.0, 2.0, 3.0)
         self.assertEqual((s.x, s.y, s.z, s.rx, s.ry, s.rz), (10.0, 20.0, 30.0, 1.0, 2.0, 3.0))
@@ -92,6 +104,18 @@ class TestStepDataclasses(unittest.TestCase):
 
     def test_movel_step_custom_vel(self):
         self.assertEqual(MoveLStep(0, 0, 0, 0, 0, 0, vel=80.0).vel, 80.0)
+
+    def test_movel_step_default_tool_offset_is_none(self):
+        self.assertIsNone(MoveLStep(0, 0, 0, 0, 0, 0).tool_offset)
+
+    def test_movel_step_default_base_offset_is_none(self):
+        self.assertIsNone(MoveLStep(0, 0, 0, 0, 0, 0).base_offset)
+
+    def test_movel_step_custom_tool_offset(self):
+        self.assertEqual(MoveLStep(0, 0, 0, 0, 0, 0, tool_offset=[1, 2, 3, 4, 5, 6]).tool_offset, [1, 2, 3, 4, 5, 6])
+
+    def test_movel_step_custom_base_offset(self):
+        self.assertEqual(MoveLStep(0, 0, 0, 0, 0, 0, base_offset=[7, 8, 9, 0, 0, 0]).base_offset, [7, 8, 9, 0, 0, 0])
 
 
 class TestRobotProgramActionInit(_ActionTestMixin, unittest.TestCase):
@@ -130,7 +154,8 @@ class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
         action.start()
         action.wait(timeout=2.0)
         self._controller.execute.assert_called_once_with(
-            "left_arm", "movej", 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, vel=20.0
+            "left_arm", "movej", 10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+            vel=20.0, tool_offset=None, base_offset=None,
         )
 
     def test_single_movel_step_calls_correct_method(self):
@@ -139,7 +164,8 @@ class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
         action.start()
         action.wait(timeout=2.0)
         self._controller.execute.assert_called_once_with(
-            "left_arm", "movel", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, vel=20.0
+            "left_arm", "movel", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+            vel=20.0, tool_offset=None, base_offset=None,
         )
 
     def test_movej_step_passes_custom_vel_as_keyword(self):
@@ -157,6 +183,62 @@ class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
         action.wait(timeout=2.0)
         _, kwargs = self._controller.execute.call_args
         self.assertEqual(kwargs.get("vel"), 40.0)
+
+    def test_movej_step_passes_none_offsets_by_default(self):
+        step = MoveJStep(0, 0, 0, 0, 0, 0)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertIsNone(kwargs.get("tool_offset"))
+        self.assertIsNone(kwargs.get("base_offset"))
+
+    def test_movel_step_passes_none_offsets_by_default(self):
+        step = MoveLStep(0, 0, 0, 0, 0, 0)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertIsNone(kwargs.get("tool_offset"))
+        self.assertIsNone(kwargs.get("base_offset"))
+
+    def test_movej_step_passes_tool_offset_as_keyword(self):
+        offset = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        step = MoveJStep(0, 0, 0, 0, 0, 0, tool_offset=offset)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertEqual(kwargs.get("tool_offset"), offset)
+        self.assertIsNone(kwargs.get("base_offset"))
+
+    def test_movej_step_passes_base_offset_as_keyword(self):
+        offset = [7.0, 8.0, 9.0, 0.0, 0.0, 0.0]
+        step = MoveJStep(0, 0, 0, 0, 0, 0, base_offset=offset)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertIsNone(kwargs.get("tool_offset"))
+        self.assertEqual(kwargs.get("base_offset"), offset)
+
+    def test_movel_step_passes_tool_offset_as_keyword(self):
+        offset = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        step = MoveLStep(0, 0, 0, 0, 0, 0, tool_offset=offset)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertEqual(kwargs.get("tool_offset"), offset)
+
+    def test_movel_step_passes_base_offset_as_keyword(self):
+        offset = [0.0, 0.0, 5.0, 0.0, 0.0, 0.0]
+        step = MoveLStep(0, 0, 0, 0, 0, 0, base_offset=offset)
+        action = self._make(steps=[step])
+        action.start()
+        action.wait(timeout=2.0)
+        _, kwargs = self._controller.execute.call_args
+        self.assertEqual(kwargs.get("base_offset"), offset)
 
     def test_result_equals_completed_step_count(self):
         steps = [
@@ -178,8 +260,8 @@ class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
         action.start()
         action.wait(timeout=2.0)
         self._controller.execute.assert_has_calls([
-            call("left_arm", "movej", 1, 2, 3, 4, 5, 6, vel=20.0),
-            call("left_arm", "movel", 10, 20, 30, 1, 2, 3, vel=20.0),
+            call("left_arm", "movej", 1, 2, 3, 4, 5, 6, vel=20.0, tool_offset=None, base_offset=None),
+            call("left_arm", "movel", 10, 20, 30, 1, 2, 3, vel=20.0, tool_offset=None, base_offset=None),
         ])
 
     def test_movej_failure_sets_failed_state(self):
@@ -364,15 +446,36 @@ class TestSerialize(unittest.TestCase):
 
     def test_single_movej_format(self):
         step = MoveJStep(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
-        self.assertEqual(serialize([step]), "movej 1.0 2.0 3.0 4.0 5.0 6.0 20.0")
+        self.assertEqual(serialize([step]), "movej 1.0 2.0 3.0 4.0 5.0 6.0 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0")
 
     def test_single_movel_format(self):
         step = MoveLStep(10.0, 20.0, 30.0, 1.0, 2.0, 3.0)
-        self.assertEqual(serialize([step]), "movel 10.0 20.0 30.0 1.0 2.0 3.0 20.0")
+        self.assertEqual(serialize([step]), "movel 10.0 20.0 30.0 1.0 2.0 3.0 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0")
 
     def test_custom_vel_included_in_output(self):
         step = MoveJStep(0, 0, 0, 0, 0, 0, vel=75.0)
         self.assertIn("75.0", serialize([step]))
+
+    def test_tool_offset_serialized_with_mode_2(self):
+        step = MoveJStep(0, 0, 0, 0, 0, 0, tool_offset=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        parts = serialize([step]).split()
+        self.assertEqual(parts[8], "2")
+        self.assertEqual(parts[9:15], ["1.0", "2.0", "3.0", "4.0", "5.0", "6.0"])
+
+    def test_base_offset_serialized_with_mode_1(self):
+        step = MoveLStep(0, 0, 0, 0, 0, 0, base_offset=[7.0, 8.0, 9.0, 0.0, 0.0, 0.0])
+        parts = serialize([step]).split()
+        self.assertEqual(parts[8], "1")
+        self.assertEqual(parts[9:15], ["7.0", "8.0", "9.0", "0.0", "0.0", "0.0"])
+
+    def test_no_offset_serialized_with_mode_0(self):
+        step = MoveJStep(0, 0, 0, 0, 0, 0)
+        parts = serialize([step]).split()
+        self.assertEqual(parts[8], "0")
+
+    def test_offset_values_appear_in_output(self):
+        step = MoveJStep(0, 0, 0, 0, 0, 0, tool_offset=[99.5, 0, 0, 0, 0, 0])
+        self.assertIn("99.5", serialize([step]))
 
     def test_multiple_steps_are_newline_separated(self):
         steps = [MoveJStep(1, 2, 3, 4, 5, 6), MoveLStep(7, 8, 9, 0, 0, 0)]
@@ -408,28 +511,36 @@ class TestDeserialize(unittest.TestCase):
         self.assertEqual(deserialize(""), [])
 
     def test_blank_lines_are_skipped(self):
-        text = "\nmovej 0.0 0.0 0.0 0.0 0.0 0.0 20.0\n\n"
+        text = "\nmovej 0.0 0.0 0.0 0.0 0.0 0.0 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0\n\n"
         self.assertEqual(len(deserialize(text)), 1)
 
     def test_movej_line_produces_movej_step(self):
-        step = deserialize("movej 1.0 2.0 3.0 4.0 5.0 6.0 20.0")[0]
+        step = deserialize("movej 1.0 2.0 3.0 4.0 5.0 6.0 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0")[0]
         self.assertIsInstance(step, MoveJStep)
         self.assertEqual((step.j1, step.j2, step.j3, step.j4, step.j5, step.j6, step.vel),
                          (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 20.0))
+        self.assertIsNone(step.tool_offset)
+        self.assertIsNone(step.base_offset)
 
     def test_movel_line_produces_movel_step(self):
-        step = deserialize("movel 10.0 20.0 30.0 1.0 2.0 3.0 50.0")[0]
+        step = deserialize("movel 10.0 20.0 30.0 1.0 2.0 3.0 50.0 0 0.0 0.0 0.0 0.0 0.0 0.0")[0]
         self.assertIsInstance(step, MoveLStep)
         self.assertEqual((step.x, step.y, step.z, step.rx, step.ry, step.rz, step.vel),
                          (10.0, 20.0, 30.0, 1.0, 2.0, 3.0, 50.0))
+        self.assertIsNone(step.tool_offset)
+        self.assertIsNone(step.base_offset)
 
     def test_multiple_lines_produce_correct_count(self):
-        text = "movej 0 0 0 0 0 0 20\nmovel 1 2 3 4 5 6 20\nmovej 7 8 9 10 11 12 20"
+        text = (
+            "movej 0 0 0 0 0 0 20 0 0 0 0 0 0 0\n"
+            "movel 1 2 3 4 5 6 20 0 0 0 0 0 0 0\n"
+            "movej 7 8 9 10 11 12 20 0 0 0 0 0 0 0"
+        )
         self.assertEqual(len(deserialize(text)), 3)
 
     def test_unknown_kind_raises_value_error(self):
         with self.assertRaises(ValueError):
-            deserialize("rotate 1 2 3 4 5 6 20")
+            deserialize("rotate 1 2 3 4 5 6 20 0 0 0 0 0 0 0")
 
     def test_too_few_fields_raises_value_error(self):
         with self.assertRaises(ValueError):
@@ -437,16 +548,39 @@ class TestDeserialize(unittest.TestCase):
 
     def test_too_many_fields_raises_value_error(self):
         with self.assertRaises(ValueError):
-            deserialize("movej 1 2 3 4 5 6 20 99")
+            deserialize("movej 1 2 3 4 5 6 20 0 0 0 0 0 0 0 99")
 
     def test_non_float_field_raises_value_error(self):
         with self.assertRaises(ValueError):
-            deserialize("movej 1.0 2.0 3.0 4.0 5.0 abc 20.0")
+            deserialize("movej 1.0 2.0 3.0 4.0 5.0 abc 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0")
 
     def test_negative_values_parsed_correctly(self):
-        step = deserialize("movej -45.0 -90.0 0.0 0.0 0.0 0.0 20.0")[0]
+        step = deserialize("movej -45.0 -90.0 0.0 0.0 0.0 0.0 20.0 0 0.0 0.0 0.0 0.0 0.0 0.0")[0]
         self.assertEqual(step.j1, -45.0)
         self.assertEqual(step.j2, -90.0)
+
+    def test_mode_2_produces_tool_offset(self):
+        step = deserialize("movej 0 0 0 0 0 0 20 2 1.0 2.0 3.0 4.0 5.0 6.0")[0]
+        self.assertEqual(step.tool_offset, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        self.assertIsNone(step.base_offset)
+
+    def test_mode_1_produces_base_offset(self):
+        step = deserialize("movel 0 0 0 0 0 0 20 1 7.0 8.0 9.0 0.0 0.0 0.0")[0]
+        self.assertIsNone(step.tool_offset)
+        self.assertEqual(step.base_offset, [7.0, 8.0, 9.0, 0.0, 0.0, 0.0])
+
+    def test_mode_0_produces_none_offsets(self):
+        step = deserialize("movej 0 0 0 0 0 0 20 0 0 0 0 0 0 0")[0]
+        self.assertIsNone(step.tool_offset)
+        self.assertIsNone(step.base_offset)
+
+    def test_unknown_offset_mode_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            deserialize("movej 0 0 0 0 0 0 20 9 0 0 0 0 0 0")
+
+    def test_old_8part_format_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            deserialize("movej 1 2 3 4 5 6 20")
 
 
 class TestSerializeDeserializeRoundtrip(unittest.TestCase):
@@ -475,6 +609,24 @@ class TestSerializeDeserializeRoundtrip(unittest.TestCase):
         original = [MoveJStep(0, 0, 0, 0, 0, 0, vel=99.0)]
         result = deserialize(serialize(original))
         self.assertEqual(result[0].vel, 99.0)
+
+    def test_roundtrip_preserves_tool_offset(self):
+        original = [MoveJStep(0, 0, 0, 0, 0, 0, tool_offset=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])]
+        result = deserialize(serialize(original))
+        self.assertEqual(result[0].tool_offset, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        self.assertIsNone(result[0].base_offset)
+
+    def test_roundtrip_preserves_base_offset(self):
+        original = [MoveLStep(1, 2, 3, 4, 5, 6, base_offset=[7.0, 8.0, 9.0, 0.0, 0.0, 0.0])]
+        result = deserialize(serialize(original))
+        self.assertIsNone(result[0].tool_offset)
+        self.assertEqual(result[0].base_offset, [7.0, 8.0, 9.0, 0.0, 0.0, 0.0])
+
+    def test_roundtrip_preserves_no_offset(self):
+        original = [MoveJStep(1, 2, 3, 4, 5, 6)]
+        result = deserialize(serialize(original))
+        self.assertIsNone(result[0].tool_offset)
+        self.assertIsNone(result[0].base_offset)
 
 
 if __name__ == "__main__":

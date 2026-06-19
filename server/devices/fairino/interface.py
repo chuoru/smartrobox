@@ -158,8 +158,11 @@ class FairinoInterface:
             return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     def movej(
-        self, j1: float, j2: float, j3: float, j4: float, j5: float, j6: float,
-        vel: float = 20.0
+        self,
+        j1: float, j2: float, j3: float, j4: float, j5: float, j6: float,
+        vel: float = 20.0,
+        tool_offset: list[float] | None = None,
+        base_offset: list[float] | None = None,
     ) -> bool:
         """! Move the robot to the specified joint angles.
         @param j1<float>: Joint 1 angle in degrees.
@@ -169,11 +172,15 @@ class FairinoInterface:
         @param j5<float>: Joint 5 angle in degrees.
         @param j6<float>: Joint 6 angle in degrees.
         @param vel<float>: Velocity percentage [0-100]. Default 20.0.
+        @param tool_offset<list[float]|None>: Pose offset [x,y,z,rx,ry,rz] in tool frame. Mutually exclusive with base_offset.
+        @param base_offset<list[float]|None>: Pose offset [x,y,z,rx,ry,rz] in base frame. Mutually exclusive with tool_offset.
         @return<bool>: True if move is successful, False otherwise.
         """
         if self._debug:
             time.sleep(1)
             return True
+        if tool_offset is not None and base_offset is not None:
+            raise ValueError("tool_offset and base_offset are mutually exclusive")
         j1, j2, j3, j4, j5, j6, vel = (
             float(j1),
             float(j2),
@@ -183,8 +190,17 @@ class FairinoInterface:
             float(j6),
             float(vel),
         )
+        if tool_offset is not None:
+            offset_flag, offset_pos = 2, [float(v) for v in tool_offset]
+        elif base_offset is not None:
+            offset_flag, offset_pos = 1, [float(v) for v in base_offset]
+        else:
+            offset_flag, offset_pos = 0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         try:
-            ret = self.robot.MoveJ([j1, j2, j3, j4, j5, j6], 0, 0, vel=vel)
+            ret = self.robot.MoveJ(
+                [j1, j2, j3, j4, j5, j6], 0, 0,
+                vel=vel, offset_flag=offset_flag, offset_pos=offset_pos,
+            )
             if ret != 0:
                 raise Exception(f"MoveJ error: {ret}")
         except Exception as exception:
@@ -194,8 +210,11 @@ class FairinoInterface:
         return True
 
     def movel(
-        self, x: float, y: float, z: float, rx: float, ry: float, rz: float,
-        vel: float = 20.0
+        self,
+        x: float, y: float, z: float, rx: float, ry: float, rz: float,
+        vel: float = 20.0,
+        tool_offset: list[float] | None = None,
+        base_offset: list[float] | None = None,
     ) -> bool:
         """! Move the robot linearly to the specified Cartesian pose.
         @param x<float>: X coordinate in mm.
@@ -205,11 +224,15 @@ class FairinoInterface:
         @param ry<float>: Rotation around Y axis in degrees.
         @param rz<float>: Rotation around Z axis in degrees.
         @param vel<float>: Velocity percentage [0-100]. Default 20.0.
+        @param tool_offset<list[float]|None>: Pose offset [x,y,z,rx,ry,rz] in tool frame. Mutually exclusive with base_offset.
+        @param base_offset<list[float]|None>: Pose offset [x,y,z,rx,ry,rz] in base frame. Mutually exclusive with tool_offset.
         @return<bool>: True if move is successful, False otherwise.
         """
         if self._debug:
             time.sleep(1)
             return True
+        if tool_offset is not None and base_offset is not None:
+            raise ValueError("tool_offset and base_offset are mutually exclusive")
         x, y, z, rx, ry, rz, vel = (
             float(x),
             float(y),
@@ -219,8 +242,17 @@ class FairinoInterface:
             float(rz),
             float(vel),
         )
+        if tool_offset is not None:
+            offset_flag, offset_pos = 2, [float(v) for v in tool_offset]
+        elif base_offset is not None:
+            offset_flag, offset_pos = 1, [float(v) for v in base_offset]
+        else:
+            offset_flag, offset_pos = 0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         try:
-            ret = self.robot.MoveL([x, y, z, rx, ry, rz], 0, 0, vel=vel)
+            ret = self.robot.MoveL(
+                [x, y, z, rx, ry, rz], 0, 0,
+                vel=vel, offset_flag=offset_flag, offset_pos=offset_pos,
+            )
             if ret != 0:
                 raise Exception(f"MoveL error: {ret}")
         except Exception as exception:
