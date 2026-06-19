@@ -7,4 +7,4 @@ pyorbbecsdk2
 numpy
 minimalmodbus
 pyserial
-pymodbus
+pymodbus==3.5.1
