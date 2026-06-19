@@ -9,7 +9,11 @@
 #
 # Copyright (c) 2026 HACHIX.  All rights reserved.
 
+# Standard library
+import time
+
 # External library
+import numpy as np
 from ultralytics import YOLO
 
 # Internal library
@@ -46,6 +50,7 @@ class EstimatePoseAction(BaseAction):
         controller: Controller,
         device_name: str,
         model_name: str = "yolo11n-pose.pt",
+        warmup_timeout: float = 3.0,
     ) -> None:
         """! Load the YOLO model and store action parameters.
 
@@ -53,10 +58,13 @@ class EstimatePoseAction(BaseAction):
         @param device_name<str>: Registered name of the Orbbec camera device.
         @param model_name<str>: YOLO11 pose model weight name or path.
             Ultralytics auto-downloads named weights on first use.
+        @param warmup_timeout<float>: Seconds to poll for the first frame before
+            giving up; accommodates camera hardware start-up delay.
         """
         super().__init__(controller)
         self._device_name = device_name
         self._model_name = model_name
+        self._warmup_timeout = warmup_timeout
         self._model = YOLO(model_name)
 
     def parameters(self) -> dict:
@@ -67,6 +75,7 @@ class EstimatePoseAction(BaseAction):
         return {
             "device_name": self._device_name,
             "model_name": self._model_name,
+            "warmup_timeout": self._warmup_timeout,
         }
 
     # =========================================================================
@@ -77,9 +86,9 @@ class EstimatePoseAction(BaseAction):
         """! Grab a frame, run pose inference, and return detected persons.
 
         @return<list[dict]|None>: List of pose dicts on success, None if cancelled.
-        @raises RuntimeError: If the camera returns no frame.
+        @raises RuntimeError: If no frame arrives within warmup_timeout seconds.
         """
-        frame = self._call(self._device_name, "get_color_frame")
+        frame = self._poll_for_frame()
         if frame is None:
             raise RuntimeError(
                 f"No frame received from camera '{self._device_name}'"
@@ -92,6 +101,22 @@ class EstimatePoseAction(BaseAction):
     # =========================================================================
     # PRIVATE METHODS
     # =========================================================================
+
+    def _poll_for_frame(self) -> np.ndarray | None:
+        """! Poll get_color_frame until a frame arrives or warmup_timeout elapses.
+
+        @return<np.ndarray|None>: BGR frame, or None on timeout or cancellation.
+        """
+        deadline = time.monotonic() + self._warmup_timeout
+        while True:
+            frame = self._call(self._device_name, "get_color_frame")
+            if frame is not None:
+                return frame
+            if time.monotonic() >= deadline:
+                return None
+            if not self._checkpoint():
+                return None
+            time.sleep(0.05)
 
     def _extract_poses(self, result) -> list[dict]:
         """! Convert a YOLO Results object into a list of pose dicts.
