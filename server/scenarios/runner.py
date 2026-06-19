@@ -14,6 +14,7 @@ import threading
 
 # Internal library
 from actions.base import ActionState, BaseAction
+from actions.estimate_pose import EstimatePoseAction
 from actions.grasp import GraspAction
 from actions.robot_program import RobotProgramAction
 from app.controller import Controller
@@ -42,9 +43,20 @@ def _make_robot_program(
     )
 
 
+def _make_estimate_pose(
+    controller: Controller, data_folder: str, params: dict
+) -> EstimatePoseAction:
+    return EstimatePoseAction(
+        controller,
+        device_name=params["device"],
+        model_name=params.get("model", "yolo11n-pose.pt"),
+    )
+
+
 _ACTION_REGISTRY: dict = {
     "grasp": _make_grasp,
     "robot_program": _make_robot_program,
+    "estimate_pose": _make_estimate_pose,
 }
 
 
