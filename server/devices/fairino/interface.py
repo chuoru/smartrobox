@@ -302,9 +302,9 @@ class FairinoInterface:
             return True
         try:
             # Call the XML-RPC proxy directly: firmware expects 7 args
-            # (joint_pos, acc, vel, cmdT, filterT, gain, id) — no axisPos.
+            # (joint_pos, axisPos, acc, vel, cmdT, filterT, gain) — no id.
             ret = self.robot.robot.ServoJ(
-                list(map(float, joint_pos)), 0.0, 0.0, float(cmd_period), 0.0, 0.0, 0
+                list(map(float, joint_pos)), [], 0.0, 0.0, float(cmd_period), 0.0, 0.0
             )
             if ret != 0:
                 raise Exception(f"ServoJ error: {ret}")
