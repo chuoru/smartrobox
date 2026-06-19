@@ -41,11 +41,11 @@ class _FrameQueue:
         self._queue: collections.deque = collections.deque(maxlen=maxsize)
         self._lock = threading.Lock()
 
-    def put(self, item) -> None:
+    def put(self, item: np.ndarray) -> None:
         with self._lock:
             self._queue.append(item)
 
-    def get(self):
+    def get(self) -> np.ndarray | None:
         with self._lock:
             return self._queue.popleft() if self._queue else None
 
@@ -70,8 +70,8 @@ class OrbbecInterface:
 
         self._pipeline: Pipeline | None = None
 
-        self._color_q: _FrameQueue = _FrameQueue()
-        self._depth_q: _FrameQueue = _FrameQueue()
+        self._color_q: _FrameQueue = _FrameQueue()  # holds decoded BGR arrays
+        self._depth_q: _FrameQueue = _FrameQueue()  # holds decoded uint16 arrays
 
         # Latest decoded frames — updated by get_color_frame / get_depth_frame.
         # Callers always receive the most recent frame even when the queue is empty.
@@ -166,15 +166,11 @@ class OrbbecInterface:
         if not self.is_alive():
             return None
         while True:
-            frame: ColorFrame | None = self._color_q.get()
-            if frame is None:
+            arr: np.ndarray | None = self._color_q.get()
+            if arr is None:
                 break
-            try:
-                decoded = self._decode_color(frame)
-                with self._lock:
-                    self._latest_color = decoded
-            except Exception:
-                self._fail_count += 1
+            with self._lock:
+                self._latest_color = arr
         with self._lock:
             return self._latest_color.copy() if self._latest_color is not None else None
 
@@ -183,15 +179,11 @@ class OrbbecInterface:
         if not self.is_alive():
             return None
         while True:
-            frame: DepthFrame | None = self._depth_q.get()
-            if frame is None:
+            arr: np.ndarray | None = self._depth_q.get()
+            if arr is None:
                 break
-            try:
-                decoded = self._decode_depth(frame)
-                with self._lock:
-                    self._latest_depth = decoded
-            except Exception:
-                self._fail_count += 1
+            with self._lock:
+                self._latest_depth = arr
         with self._lock:
             return self._latest_depth.copy() if self._latest_depth is not None else None
 
@@ -232,20 +224,25 @@ class OrbbecInterface:
     # INTERNAL
     # ===========================================================
     def _on_frame(self, frame_set: FrameSet):
-        """SDK callback — kept lightweight; just queues raw frames."""
+        """SDK callback — decode immediately to copy data out of the SDK frame pool."""
         if frame_set is None or not self.running:
             return
 
         color_frame: ColorFrame | None = frame_set.get_color_frame()
         depth_frame: DepthFrame | None = frame_set.get_depth_frame()
 
-        if color_frame is not None:
-            self._color_q.put(color_frame)
+        try:
+            if color_frame is not None:
+                self._color_q.put(self._decode_color(color_frame))
 
-        if depth_frame is not None:
-            if self._depth_scale is None:
-                self._depth_scale = depth_frame.get_depth_scale()
-            self._depth_q.put(depth_frame)
+            if depth_frame is not None:
+                if self._depth_scale is None:
+                    self._depth_scale = depth_frame.get_depth_scale()
+                self._depth_q.put(self._decode_depth(depth_frame))
+
+            self._fail_count = 0
+        except Exception:
+            self._fail_count += 1
 
     @staticmethod
     def _decode_color(frame: ColorFrame) -> np.ndarray:
