@@ -301,8 +301,10 @@ class FairinoInterface:
             time.sleep(cmd_period)
             return True
         try:
-            ret = self.robot.ServoJ(
-                list(joint_pos), [0.0, 0.0, 0.0, 0.0], cmdT=cmd_period
+            # Call the XML-RPC proxy directly: firmware expects 7 args
+            # (joint_pos, acc, vel, cmdT, filterT, gain, id) — no axisPos.
+            ret = self.robot.robot.ServoJ(
+                list(map(float, joint_pos)), 0.0, 0.0, float(cmd_period), 0.0, 0.0, 0
             )
             if ret != 0:
                 raise Exception(f"ServoJ error: {ret}")
