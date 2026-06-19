@@ -41,8 +41,3 @@ devices:
     type: orbbec
     params:
       device_index: 2
-
-  neck_camera:
-    type: orbbec
-    params:
-      device_index: 3
