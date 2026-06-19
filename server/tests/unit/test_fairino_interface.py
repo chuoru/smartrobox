@@ -228,5 +228,138 @@ class TestFairinoInterfaceMovel(unittest.TestCase):
         self.assertEqual(kwargs["vel"], 75.0)
 
 
+# ---------------------------------------------------------------------------
+# SERVO METHODS
+# ---------------------------------------------------------------------------
+
+class TestFairinoInterfaceServo(unittest.TestCase):
+    """Unit tests for servo_start, servo_j, servo_end, get_joint_pos."""
+
+    # --- servo_start ---
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_start_debug_returns_true(self, mock_robot_module):
+        iface = FairinoInterface(debug=True)
+        iface.open()
+        self.assertTrue(iface.servo_start())
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_start_calls_sdk(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveStart.return_value = 0
+        self.assertTrue(iface.servo_start())
+        mock_robot.ServoMoveStart.assert_called_once()
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_start_returns_false_on_sdk_error(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveStart.return_value = -1
+        self.assertFalse(iface.servo_start())
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_start_returns_false_on_exception(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveStart.side_effect = Exception("timeout")
+        self.assertFalse(iface.servo_start())
+
+    # --- servo_end ---
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_end_debug_returns_true(self, mock_robot_module):
+        iface = FairinoInterface(debug=True)
+        iface.open()
+        self.assertTrue(iface.servo_end())
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_end_calls_sdk(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveEnd.return_value = 0
+        self.assertTrue(iface.servo_end())
+        mock_robot.ServoMoveEnd.assert_called_once()
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_end_returns_false_on_sdk_error(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveEnd.return_value = -1
+        self.assertFalse(iface.servo_end())
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_end_returns_false_on_exception(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoMoveEnd.side_effect = Exception("lost connection")
+        self.assertFalse(iface.servo_end())
+
+    # --- get_joint_pos ---
+
+    def test_get_joint_pos_debug_returns_zero_joints(self):
+        iface = FairinoInterface(debug=True)
+        iface.open()
+        ret, joints = iface.get_joint_pos()
+        self.assertEqual(ret, 0)
+        self.assertEqual(joints, [0.0] * 6)
+
+    @patch("devices.fairino.interface.Robot")
+    def test_get_joint_pos_calls_sdk(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.GetActualJointPosDegree.return_value = (0, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        ret, joints = iface.get_joint_pos()
+        self.assertEqual(ret, 0)
+        self.assertEqual(joints, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        mock_robot.GetActualJointPosDegree.assert_called_once_with(flag=0)
+
+    @patch("devices.fairino.interface.Robot")
+    def test_get_joint_pos_returns_minus_one_on_exception(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.GetActualJointPosDegree.side_effect = Exception("read error")
+        ret, joints = iface.get_joint_pos()
+        self.assertEqual(ret, -1)
+        self.assertEqual(joints, [0.0] * 6)
+
+    # --- servo_j ---
+
+    @patch("devices.fairino.interface.time")
+    def test_servo_j_debug_returns_true(self, mock_time):
+        iface = FairinoInterface(debug=True)
+        iface.open()
+        self.assertTrue(iface.servo_j([0.0] * 6))
+
+    @patch("devices.fairino.interface.time")
+    def test_servo_j_debug_sleeps_cmd_period(self, mock_time):
+        iface = FairinoInterface(debug=True)
+        iface.open()
+        iface.servo_j([0.0] * 6, cmd_period=0.032)
+        mock_time.sleep.assert_called_with(0.032)
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_j_calls_sdk_with_correct_args(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoJ.return_value = 0
+        joints = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        iface.servo_j(joints, cmd_period=0.016)
+        mock_robot.ServoJ.assert_called_once_with(
+            joints, [0.0, 0.0, 0.0, 0.0], cmdT=0.016
+        )
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_j_uses_default_cmd_period(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoJ.return_value = 0
+        iface.servo_j([0.0] * 6)
+        _, kwargs = mock_robot.ServoJ.call_args
+        self.assertEqual(kwargs["cmdT"], 0.016)
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_j_returns_false_on_sdk_error(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoJ.return_value = -1
+        self.assertFalse(iface.servo_j([0.0] * 6))
+
+    @patch("devices.fairino.interface.Robot")
+    def test_servo_j_returns_false_on_exception(self, mock_robot_module):
+        iface, mock_robot = _make_iface(mock_robot_module)
+        mock_robot.ServoJ.side_effect = Exception("rpc error")
+        self.assertFalse(iface.servo_j([0.0] * 6))
+
+
 if __name__ == "__main__":
     unittest.main()

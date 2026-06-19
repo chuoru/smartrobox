@@ -12,3 +12,7 @@ _pyorbbecsdk_mock.OBFormat.MJPG = "MJPG"
 _pyorbbecsdk_mock.OBFormat.RGB = "RGB"
 _pyorbbecsdk_mock.OBFormat.BGR = "BGR"
 sys.modules.setdefault("pyorbbecsdk", _pyorbbecsdk_mock)
+
+# Stub ultralytics so action modules that import YOLO at module level can be
+# collected without the package installed in the test environment.
+sys.modules.setdefault("ultralytics", MagicMock())

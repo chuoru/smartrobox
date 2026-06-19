@@ -261,6 +261,72 @@ class FairinoInterface:
         print(f"[movel] Moved to position: {x}, {y}, {z}, {rx}, {ry}, {rz}")
         return True
 
+    def get_joint_pos(self) -> tuple[int, list[float]]:
+        """! Get the current joint positions in degrees.
+        @return<tuple[int, list[float]]>: (error_code, [j1, j2, j3, j4, j5, j6]).
+        """
+        if self._debug:
+            return (0, [0.0] * 6)
+        try:
+            ret, joints = self.robot.GetActualJointPosDegree(flag=0)
+            return (ret, list(joints))
+        except Exception as exception:
+            print(f"[get_joint_pos] Failed to get joint positions: {exception}")
+            return (-1, [0.0] * 6)
+
+    def servo_start(self) -> bool:
+        """! Enter servo mode; must be called before servo_j().
+        @return<bool>: True if successful, False otherwise.
+        """
+        if self._debug:
+            print("[FairinoInterface] servo_start (debug)")
+            return True
+        try:
+            ret = self.robot.ServoMoveStart()
+            if ret != 0:
+                raise Exception(f"ServoMoveStart error: {ret}")
+        except Exception as exception:
+            print(f"[servo_start] Failed: {exception}")
+            return False
+        return True
+
+    def servo_j(self, joint_pos: list[float], cmd_period: float = 0.016) -> bool:
+        """! Send one joint-space servo command.
+        @param joint_pos<list[float]>: Target joint angles [j1..j6] in degrees.
+        @param cmd_period<float>: Command cycle time in seconds. Default 0.016.
+        @return<bool>: True if successful, False otherwise.
+        """
+        if self._debug:
+            print(f"[FairinoInterface] servo_j {joint_pos} (debug)")
+            time.sleep(cmd_period)
+            return True
+        try:
+            ret = self.robot.ServoJ(
+                list(joint_pos), [0.0, 0.0, 0.0, 0.0], cmdT=cmd_period
+            )
+            if ret != 0:
+                raise Exception(f"ServoJ error: {ret}")
+        except Exception as exception:
+            print(f"[servo_j] Failed: {exception}")
+            return False
+        return True
+
+    def servo_end(self) -> bool:
+        """! Exit servo mode; call after the servo loop finishes.
+        @return<bool>: True if successful, False otherwise.
+        """
+        if self._debug:
+            print("[FairinoInterface] servo_end (debug)")
+            return True
+        try:
+            ret = self.robot.ServoMoveEnd()
+            if ret != 0:
+                raise Exception(f"ServoMoveEnd error: {ret}")
+        except Exception as exception:
+            print(f"[servo_end] Failed: {exception}")
+            return False
+        return True
+
     def is_opened(self):
         """! Check if the fairino interface is opened.
         @return<bool>: True if opened, False otherwise.

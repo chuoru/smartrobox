@@ -17,6 +17,7 @@ from actions.base import ActionState, BaseAction
 from actions.estimate_pose import EstimatePoseAction
 from actions.grasp import GraspAction
 from actions.robot_program import RobotProgramAction
+from actions.visual_servo import VisualServoAction
 from app.controller import Controller
 from scenarios.step import ActionStep, ParallelStep, Scenario, SequenceStep
 
@@ -53,10 +54,28 @@ def _make_estimate_pose(
     )
 
 
+def _make_visual_servo(
+    controller: Controller, data_folder: str, params: dict
+) -> VisualServoAction:
+    return VisualServoAction(
+        controller,
+        robot_device=params["robot_device"],
+        camera_device=params["camera_device"],
+        target_keypoints=params["target_keypoints"],
+        error_threshold=float(params["error_threshold"]),
+        stable_ticks=int(params["stable_ticks"]),
+        gain_matrix=params.get("gain_matrix", [[0.0, 0.0]] * 6),
+        cmd_period=float(params.get("cmd_period", 0.016)),
+        timeout=float(params.get("timeout", 30.0)),
+        model_name=params.get("model", "yolo11n-pose.pt"),
+    )
+
+
 _ACTION_REGISTRY: dict = {
     "grasp": _make_grasp,
     "robot_program": _make_robot_program,
     "estimate_pose": _make_estimate_pose,
+    "visual_servo": _make_visual_servo,
 }
 
 
