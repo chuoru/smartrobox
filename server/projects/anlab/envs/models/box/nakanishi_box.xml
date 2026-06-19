@@ -1,0 +1,49 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="nakanishi_box">
+  <asset>
+    <material name="nakanishi_box_mat" rgba="0.7 0.7 0.7 1" />
+    <material name="black" texuniform="true" metallic="0" roughness="1" rgba="0 0 0 1" />
+    <material name="white" texuniform="true" metallic="0" roughness="1" />
+    <mesh name="nakanishi_box_filter" file="box/nakanishi/filter.stl" />
+    <mesh name="nakanishi_box_front_cover" file="box/nakanishi/front_cover.stl" />
+    <mesh name="nakanishi_box_left_cover" file="box/nakanishi/left_cover.stl" />
+    <mesh name="nakanishi_box_left_surface" file="box/nakanishi/left_surface.stl" />
+    <mesh name="nakanishi_box_mid_bar" file="box/nakanishi/mid_bar.stl" />
+    <mesh name="nakanishi_box_pole_left" file="box/nakanishi/pole_left.stl" />
+    <mesh name="nakanishi_box_pole_right" file="box/nakanishi/pole_right.stl" />
+    <mesh name="nakanishi_box_right_cover" file="box/nakanishi/right_cover.stl" />
+    <mesh name="nakanishi_box_right_surface" file="box/nakanishi/right_surface.stl" />
+    <mesh name="nakanishi_box_top_bar" file="box/nakanishi/top_bar.stl" />
+    <mesh name="nakanishi_box_upper_mid_bar" file="box/nakanishi/upper_mid_bar.stl" />
+    <mesh name="body" file="box/nakanishi/body.stl" />
+    <mesh name="left_board" file="box/nakanishi/left_board.stl" />
+    <mesh name="right_board" file="box/nakanishi/right_board.stl" />
+    <mesh name="body_base" file="box/nakanishi/body_base.stl" />
+    <mesh name="left_leg" file="box/nakanishi/left_leg.stl" />
+    <mesh name="right_leg" file="box/nakanishi/right_leg.stl" />
+    <mesh name="left_base" file="box/nakanishi/left_base.stl" />
+    <mesh name="right_base" file="box/nakanishi/right_base.stl" />
+  </asset>
+
+  <worldbody>
+    <body name="nakanishi_box" quat="0.707107 -0.707107 0 0">
+      <geom name="filter" pos="0 0.15 0.15" quat="0 1 0 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_filter" />
+      <geom name="left_cover" pos="0.04 0 0" quat="1 0 0 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_left_cover" />
+      <geom name="right_cover" pos="-0.05 0 0" quat="0 0 1 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_right_cover" />
+      <geom name="front_cover" pos="0.51 0.34 0.12" quat="0.707107 0 0 0.707107" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_front_cover" />
+      <geom name="left_surface" pos="0 0 0" quat="0 0 0 1" type="mesh" material="black" mesh="nakanishi_box_left_surface" />
+      <geom name="right_surface" pos="0 -0.002 0" quat="1 0 0 0" type="mesh" material="black" mesh="nakanishi_box_right_surface" />
+      <geom name="mid_bar" pos="0.47 0.02 -0.38" quat="0.707107 0 0.707107 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_mid_bar" />
+      <geom name="pole_left" pos="-0.51 0.9 -0.41" quat="-0.707107 0.707107 0 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_pole_left" />
+      <geom name="pole_right" pos="0.47 0.9 -0.41" quat="-0.707107 0.707107 0 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_pole_right" />
+      <geom name="top_bar" pos="0.47 -1.3 -0.41" quat="0.707107 0 0.707107 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_top_bar" />
+      <geom name="upper_mid_bar" pos="0.47 -0.5 -0.41" quat="0.707107 0 0.707107 0" type="mesh" material="nakanishi_box_mat" mesh="nakanishi_box_upper_mid_bar" />
+      <geom name="body" pos="-0.03 0 -0.167" quat="-0.707107 0.707107 0 0" type="mesh" material="nakanishi_box_mat" mesh="body" />
+      <geom name="left_board" pos="-0.31 -0.9 -0.41" quat="1 0 0 0" type="mesh" material="nakanishi_box_mat" mesh="left_board" />
+      <geom name="right_board" pos="0.31 -0.9 -0.41" quat="1 0 0 0" type="mesh" material="nakanishi_box_mat" mesh="right_board" />
+      <geom name="body_base" pos="0 0 -0.225" quat="1 0 0 0" type="mesh" material="nakanishi_box_mat" mesh="body_base" />
+      <geom name="left_base" pos="0.075 -0.42 -0.23" quat="0.707107 0 0 0.707107" type="mesh" material="nakanishi_box_mat" mesh="left_base" />
+      <geom name="right_base" pos="-0.06 -0.42 -0.23" quat="0.707107 0 0 0.707107" type="mesh" material="nakanishi_box_mat" mesh="right_base" />
+    </body>
+  </worldbody>
+</mujoco>

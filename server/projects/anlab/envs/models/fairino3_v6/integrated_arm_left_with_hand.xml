@@ -1,0 +1,75 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="integrated_arm_left">
+  <!--robola compile-->
+  <compiler angle="radian" />
+
+  <asset>
+    <texture type="2d" colorspace="auto" name="Texture" builtin="gradient" rgb1="0.2 0.3 0.4" rgb2="0.9 0.9 0.9" width="512" height="512" />
+    <texture type="2d" colorspace="auto" name="gripper_tex" builtin="flat" rgb1="0.55 0.55 0.55" width="256" height="256" />
+    <texture type="2d" colorspace="auto" name="elp_tex" builtin="flat" rgb1="0.15 0.15 0.15" width="256" height="256" />
+    <material name="Material" texuniform="true" metallic="0" roughness="1" rgba="0.5 0.5 0.5 1" />
+    <material name="gripper_mat" texture="gripper_tex" rgba="0.75 0.75 0.75 1" />
+    <material name="elp_mat" texture="elp_tex" rgba="0.2 0.2 0.2 1" />
+    <mesh name="left_base_link" file="../../assets/meshes/robots/fairino3_v6/base_link.STL" />
+    <mesh name="left_shoulder_link" file="../../assets/meshes/robots/fairino3_v6/shoulder_link.STL" />
+    <mesh name="left_upperarm_link" file="../../assets/meshes/robots/fairino3_v6/upperarm_link.STL" />
+    <mesh name="left_forearm_link" file="../../assets/meshes/robots/fairino3_v6/forearm_link.STL" />
+    <mesh name="left_wrist1_link" file="../../assets/meshes/robots/fairino3_v6/wrist1_link.STL" />
+    <mesh name="left_wrist2_link" file="../../assets/meshes/robots/fairino3_v6/wrist2_link.STL" />
+    <mesh name="left_wrist3_link" file="../../assets/meshes/robots/fairino3_v6/wrist3_link.STL" />
+  </asset>
+
+  <worldbody>
+    <body name="left_fairino3_v6_root_frame" pos="0.07 -0.23 0.42" quat="0.5 0.5 0.5 0.5">
+      <body name="left_base_link" gravcomp="1">
+        <inertial pos="-0.00049027 -0.00045095 0.032527" quat="0 0 0 1" mass="0.78393" diaginertia="0.0013854 0.0013849 0.001977" />
+        <geom name="left_geom_0_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="left_base_link" />
+        <body name="left_shoulder_link" gravcomp="1" quat="0 0 0 1">
+          <inertial pos="-3.8658e-07 -0.0024176 0.13519" quat="0 0 0 1" mass="2.1225" diaginertia="0.0033227 0.0032419 0.0023129" />
+          <joint name="left_j1" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="1" damping="10" />
+          <geom name="left_geom_1_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="left_shoulder_link" />
+          <body name="left_upperarm_link" pos="0 0 0.14" quat="0.707105 0.707108 0 0" gravcomp="1">
+            <inertial pos="-0.14111 3.4656e-06 0.11053" quat="0 0 0 1" mass="4.8053" diaginertia="0.0075945 0.0081317 0.0059231" />
+            <joint name="left_j2" pos="0 0 0" axis="0 0 1" ref="-0.072" range="-4.6251 1.4835" actuatorgravcomp="true" armature="0.5" damping="10" frictionloss="0.5" />
+            <geom name="left_geom_2_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="left_upperarm_link" />
+            <body name="left_forearm_link" pos="-0.28 0 0" gravcomp="1">
+              <inertial pos="-0.18987 5.2268e-06 0.0034145" quat="0 0 0 1" mass="2.2312" diaginertia="0.0028852 0.0035145 0.0029186" />
+              <joint name="left_j3" pos="0 0 0" axis="0 0 1" range="-2.8274 2.8274" actuatorgravcomp="true" armature="0.3" damping="8" frictionloss="0.3" />
+              <geom name="left_geom_3_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="left_forearm_link" />
+              <body name="left_wrist1_link" pos="-0.24001 0 0" quat="0 0 0 1" gravcomp="1">
+                <inertial pos="4.5665e-07 -0.0034666 0.098292" quat="0 0 0 1" mass="1.5961" diaginertia="0.0020112 0.0014524 0.0019076" />
+                <joint name="left_j4" pos="0 0 0" axis="0 0 1" range="-4.6251 1.4835" actuatorgravcomp="true" armature="0.1" damping="3" frictionloss="0.1" />
+                <geom name="left_geom_4_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="left_wrist1_link" />
+                <body name="left_wrist2_link" pos="0 0 0.102" quat="0.707105 0.707108 0 0" gravcomp="1">
+                  <inertial pos="-4.5262e-07 0.0034666 0.098292" quat="0 0 0 1" mass="1.5961" diaginertia="0.0020112 0.0014524 0.0019076" />
+                  <joint name="left_j5" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="0.1" damping="3" frictionloss="0.1" />
+                  <geom name="left_geom_5_" type="mesh" group="2" density="0" mesh="left_wrist2_link" />
+                  <body name="left_wrist3_link" pos="0 0 0.102" quat="0 0 0.707105 0.707108" gravcomp="1">
+                    <inertial pos="7.559e-05 1.3858e-05 0.076619" quat="0 0 0 1" mass="0.53877" diaginertia="0.00028785 0.00028896 0.00042655" />
+                    <joint name="left_j6" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="0.05" damping="2" frictionloss="0.1" />
+                    <geom name="left_geom_6_" type="mesh" group="2" mesh="left_wrist3_link" />
+                    <site name="left_link_tcp" pos="0 0 0.102" size="0.001" group="4" rgba="1 0 0 1" />
+                    <site name="left_attachment_site" pos="0 0 0.102" size="0.001" group="5" rgba="1 0 0 1" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude name="exclude_1" body1="left_base_link" body2="left_shoulder_link" />
+  </contact>
+
+  <actuator>
+    <general name="left_act1" joint="left_j1" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="700" biasprm="0 -900 -180" />
+    <general name="left_act2" joint="left_j2" ctrlrange="-4.6251 1.4835" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="1000" biasprm="0 -1200 -240" />
+    <general name="left_act3" joint="left_j3" ctrlrange="-2.8274 2.8274" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="1100" biasprm="0 -1300 -260" />
+    <general name="left_act4" joint="left_j4" ctrlrange="-4.6251 1.4835" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="160" biasprm="0 -160 -35" />
+    <general name="left_act5" joint="left_j5" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="140" biasprm="0 -140 -30" />
+    <general name="left_act6" joint="left_j6" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="140" biasprm="0 -140 -30" />
+  </actuator>
+</mujoco>

@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="starrobox_cafe_anlab">
+  <!--robola compile-->
+  <compiler angle="radian" meshdir="./assets/meshes/" />
+
+  <visual>
+    <global azimuth="135" elevation="-25" />
+  </visual>
+
+  <include file="./models/fairino3_v6/integrated_arm_left_with_hand.xml" />
+  <include file="./models/fairino3_v6/integrated_arm_right_with_hand.xml" />
+  <include file="./models/box/nakanishi_box.xml" />
+
+  <asset>
+    <texture type="skybox" colorspace="auto" name="skybox" builtin="gradient"
+             rgb1="0.7 0.8 1" rgb2="0.95 0.95 1" width="512" height="3072" />
+  </asset>
+
+</mujoco>

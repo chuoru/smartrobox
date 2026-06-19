@@ -1,0 +1,121 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="integrated_arm_right">
+  <!--robola compile-->
+  <compiler angle="radian" />
+
+  <asset>
+    <texture type="2d" colorspace="auto" name="right_Texture" builtin="gradient" rgb1="0.2 0.3 0.4" rgb2="0.9 0.9 0.9" width="512" height="512" />
+    <texture type="2d" colorspace="auto" name="right_gripper_tex" builtin="flat" rgb1="0.55 0.55 0.55" width="256" height="256" />
+    <texture type="2d" colorspace="auto" name="right_elp_tex" builtin="flat" rgb1="0.15 0.15 0.15" width="256" height="256" />
+    <material name="right_Material" texuniform="true" metallic="0" roughness="1" rgba="0.5 0.5 0.5 1" />
+    <material name="right_gripper_mat" texture="right_gripper_tex" rgba="0.75 0.75 0.75 1" />
+    <material name="right_elp_mat" texture="right_elp_tex" rgba="0.2 0.2 0.2 1" />
+    <mesh name="right_base_link" file="../../assets/meshes/robots/fairino3_v6/base_link.STL" />
+    <mesh name="right_shoulder_link" file="../../assets/meshes/robots/fairino3_v6/shoulder_link.STL" />
+    <mesh name="right_upperarm_link" file="../../assets/meshes/robots/fairino3_v6/upperarm_link.STL" />
+    <mesh name="right_forearm_link" file="../../assets/meshes/robots/fairino3_v6/forearm_link.STL" />
+    <mesh name="right_wrist1_link" file="../../assets/meshes/robots/fairino3_v6/wrist1_link.STL" />
+    <mesh name="right_wrist2_link" file="../../assets/meshes/robots/fairino3_v6/wrist2_link.STL" />
+    <mesh name="right_wrist3_link" file="../../assets/meshes/robots/fairino3_v6/wrist3_link.STL" />
+    <mesh name="right_iai_upper_body" file="../../assets/meshes/gripper/iai/upper_body.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_lower_body" file="../../assets/meshes/gripper/iai/lower_body.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_left_pinch" file="../../assets/meshes/gripper/iai/left_pinch.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_right_pinch" file="../../assets/meshes/gripper/iai/right_pinch.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_cable" file="../../assets/meshes/gripper/iai/cable.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_side" file="../../assets/meshes/gripper/iai/gripper_side.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_claw" file="../../assets/meshes/gripper/iai/square_claw.stl" />
+    <mesh name="right_iai_gripper_cover" file="../../assets/meshes/gripper/iai/gripper_cover.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_iai_connect_part" file="../../assets/meshes/gripper/iai/connect_part.stl" scale="0.001 0.001 0.001" />
+    <mesh name="right_elp_cam_mesh" file="../../assets/meshes/camera/elp_cam.stl" scale="0.001 0.001 0.001" />
+  </asset>
+
+  <worldbody>
+    <body name="right_fairino3_v6_root_frame" pos="-0.07 -0.23 0.42" quat="-0.5 0.5 0.5 -0.5">
+      <body name="right_base_link" gravcomp="1">
+        <inertial pos="-0.00049027 -0.00045095 0.032527" quat="0 0 0 1" mass="0.78393" diaginertia="0.0013854 0.0013849 0.001977" />
+        <geom name="right_geom_0_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="right_base_link" />
+        <body name="right_shoulder_link" gravcomp="1">
+          <inertial pos="-3.8658e-07 -0.0024176 0.13519" quat="0 0 0 1" mass="2.1225" diaginertia="0.0033227 0.0032419 0.0023129" />
+          <joint name="right_j1" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="1" damping="10" />
+          <geom name="right_geom_1_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="right_shoulder_link" />
+          <body name="right_upperarm_link" pos="0 0 0.14" quat="0 0 0.707105 -0.707108" gravcomp="1">
+            <inertial pos="-0.14111 3.4656e-06 0.11053" quat="0 0 0 1" mass="4.8053" diaginertia="0.0075945 0.0081317 0.0059231" />
+            <joint name="right_j2" pos="0 0 0" axis="0 0 1" ref="-0.072" range="-4.6251 1.4835" actuatorgravcomp="true" armature="0.5" damping="10" frictionloss="0.5" />
+            <geom name="right_geom_2_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="right_upperarm_link" />
+            <body name="right_forearm_link" pos="-0.28 0 0" gravcomp="1">
+              <inertial pos="-0.18987 5.2268e-06 0.0034145" quat="0 0 0 1" mass="2.2312" diaginertia="0.0028852 0.0035145 0.0029186" />
+              <joint name="right_j3" pos="0 0 0" axis="0 0 1" range="-2.8274 2.8274" actuatorgravcomp="true" armature="0.3" damping="8" frictionloss="0.3" />
+              <geom name="right_geom_3_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="right_forearm_link" />
+              <body name="right_wrist1_link" pos="-0.24001 0 0" gravcomp="1">
+                <inertial pos="4.5665e-07 -0.0034666 0.098292" quat="0 0 0 1" mass="1.5961" diaginertia="0.0020112 0.0014524 0.0019076" />
+                <joint name="right_j4" pos="0 0 0" axis="0 0 1" range="-4.6251 1.4835" actuatorgravcomp="true" armature="0.1" damping="3" frictionloss="0.1" />
+                <geom name="right_geom_4_" type="mesh" contype="0" conaffinity="0" group="2" density="0" mesh="right_wrist1_link" />
+                <body name="right_wrist2_link" pos="0 0 0.102" quat="0.707105 0.707108 0 0" gravcomp="1">
+                  <inertial pos="-4.5262e-07 0.0034666 0.098292" quat="0 0 0 1" mass="1.5961" diaginertia="0.0020112 0.0014524 0.0019076" />
+                  <joint name="right_j5" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="0.1" damping="3" frictionloss="0.1" />
+                  <geom name="right_geom_5_" type="mesh" group="2" density="0" mesh="right_wrist2_link" />
+                  <body name="right_wrist3_link" pos="0 0 0.102" quat="0 0 0.707105 0.707108" gravcomp="1">
+                    <inertial pos="7.559e-05 1.3858e-05 0.076619" quat="0 0 0 1" mass="0.53877" diaginertia="0.00028785 0.00028896 0.00042655" />
+                    <joint name="right_j6" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543" actuatorgravcomp="true" armature="0.05" damping="2" frictionloss="0.1" />
+                    <geom name="right_geom_6_" type="mesh" group="2" mesh="right_wrist3_link" />
+                    <site name="right_link_tcp" pos="0 0 0.102" size="0.001" group="4" rgba="1 0 0 1" />
+                    <site name="right_attachment_site" pos="0 0 0.102" size="0.001" group="5" rgba="1 0 0 1" />
+                    <body name="right/gripper_base" pos="0 0 0.202095" quat="0.707107 0.707107 0 0" gravcomp="1">
+                      <inertial pos="0 0 0.0002" mass="0.6" diaginertia="0.001 0.001 0.001" />
+                      <geom name="right/upper_body" pos="0.000545159 0 0.0021" quat="0 1 0 0" type="mesh" contype="0" conaffinity="0" density="5" material="right_gripper_mat" mesh="right_iai_upper_body" />
+                      <geom name="right/lower_body" pos="0 -0.0410198 -0.0147173" quat="0 1 0 0" type="mesh" group="2" material="right_gripper_mat" mesh="right_iai_lower_body" />
+                      <geom name="right/right_side" pos="0 -0.0802952 0" quat="1 0 0 0" type="mesh" material="right_gripper_mat" mesh="right_iai_side" />
+                      <geom name="right/left_side" pos="-0.0765432 -0.0806754 0" quat="1 0 0 0" type="mesh" material="right_gripper_mat" mesh="right_iai_side" />
+                      <geom name="right/cover" pos="0 0.18463 -0.0489517" quat="0 0 0 1" type="mesh" material="right_gripper_mat" mesh="right_iai_gripper_cover" />
+                      <geom name="right/connector" pos="0 0.000735604 -0.0340329" quat="0 0 0 1" type="mesh" material="right_gripper_mat" mesh="right_iai_connect_part" />
+                      <body name="right/right_pinch_body" gravcomp="1">
+                        <joint name="right/right_pinch" pos="0.02 0 0" axis="-1 0 0" type="slide" limited="true" range="-0.015 0.015" actuatorfrclimited="false" actuatorgravcomp="true" armature="0.001" damping="0.2" />
+                        <geom name="right/right_pinch" pos="0.0243746 0.00245222 0.00147149" quat="0 0 0 1" type="mesh" friction="0" density="1" material="right_gripper_mat" mesh="right_iai_right_pinch" />
+                        <geom name="right/right_claw" pos="-0.07 0.055 0.002" quat="0 1 0 0" type="mesh" mass="1e-09" material="right_gripper_mat" mesh="right_iai_claw" />
+                      </body>
+                      <body name="right/left_pinch_body" gravcomp="1">
+                        <joint name="right/left_pinch" pos="-0.02 0 0" axis="1 0 0" type="slide" limited="true" range="-0.015 0.015" actuatorfrclimited="false" actuatorgravcomp="true" armature="0.001" damping="0.2" />
+                        <geom name="right/left_pinch" pos="-0.0232227 0.00214457 0.00154222" quat="0 0 0 1" type="mesh" friction="0" density="1" material="right_gripper_mat" mesh="right_iai_left_pinch" />
+                        <geom name="right/left_claw" pos="0.07 0.055 0.002" quat="0 0 0 1" type="mesh" mass="1e-09" material="right_gripper_mat" mesh="right_iai_claw" />
+                      </body>
+                    </body>
+                    <body name="right/elp_base" pos="0 0 0.15" quat="0 0 0 1" gravcomp="1">
+                      <inertial pos="0 0 0" mass="0.08" diaginertia="5e-05 5e-05 5e-05" />
+                      <geom name="right/elp_body" pos="0.0288847 0.104262 -0.0295712" quat="0.707107 0 0 0.707107" type="mesh" contype="0" conaffinity="0" group="2" material="right_elp_mat" mesh="right_elp_cam_mesh" />
+                      <site name="right/elp_mount_site" pos="-0.0568629 0.0413539 0.0115667" quat="0.707107 0 0.707107 0" size="2e-06" group="5" rgba="0 1 0 1" />
+                      <site name="right/elp_optical_site" pos="-0.0291295 0.0286639 0.0417027" size="2e-06" group="5" rgba="1 0 0 1" />
+                      <camera name="right/elp_rgb" pos="-0.0289568 0.0285627 0.0376585" quat="0 0.707107 -0.707107 0" fovy="70" />
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <pair geom1="right/right_side" geom2="right/right_pinch" name="right/gripper_pair_1" />
+    <pair geom1="right/left_side" geom2="right/left_pinch" name="right/gripper_pair_2" />
+    <exclude name="right_exclude_1" body1="right_base_link" body2="right_shoulder_link" />
+    <exclude name="right/gripper_exclude_1" body1="right/gripper_base" body2="right/right_pinch_body" />
+    <exclude name="right/gripper_exclude_2" body1="right/gripper_base" body2="right/left_pinch_body" />
+  </contact>
+
+  <equality>
+    <joint name="right/new_equality" joint1="right/right_pinch" joint2="right/left_pinch" polycoef="0 1 0 0 0" />
+  </equality>
+
+  <actuator>
+    <general name="right_act1" joint="right_j1" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="700" biasprm="0 -900 -180" />
+    <general name="right_act2" joint="right_j2" ctrlrange="-4.6251 1.4835" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="1000" biasprm="0 -1200 -240" />
+    <general name="right_act3" joint="right_j3" ctrlrange="-2.8274 2.8274" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="1100" biasprm="0 -1300 -260" />
+    <general name="right_act4" joint="right_j4" ctrlrange="-4.6251 1.4835" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="160" biasprm="0 -160 -35" />
+    <general name="right_act5" joint="right_j5" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="140" biasprm="0 -140 -30" />
+    <general name="right_act6" joint="right_j6" ctrlrange="-3.0543 3.0543" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="140" biasprm="0 -140 -30" />
+    <general name="right/gripper_actuator" joint="right/right_pinch" ctrllimited="true" ctrlrange="-0.015 0.015" dynprm="0 0 0 0 0 0 0 0 0 0" biastype="affine" gainprm="5" biasprm="0 -5" />
+  </actuator>
+</mujoco>
+
