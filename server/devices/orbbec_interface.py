@@ -257,6 +257,10 @@ class OrbbecInterface:
             # Uncompressed RGB (3 bytes/pixel)
             return cv2.cvtColor(data.reshape(h, w, 3), cv2.COLOR_RGB2BGR)
 
+        if len(data) == h * w * 2:
+            # YUYV / YUV422 (2 bytes/pixel) — Gemini 305 default color format
+            return cv2.cvtColor(data.reshape(h, w, 2), cv2.COLOR_YUV2BGR_YUYV)
+
         # Compressed — decode as JPEG/MJPEG
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if img is None:
