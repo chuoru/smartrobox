@@ -24,7 +24,6 @@ from pyorbbecsdk import (
     Pipeline,
     Config,
     OBSensorType,
-    OBAlignMode,
     OBFormat,
     ColorFrame,
     DepthFrame,
@@ -90,7 +89,6 @@ class OrbbecInterface:
         depth_profiles = self._pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
         config.enable_stream(color_profiles.get_default_video_stream_profile())
         config.enable_stream(depth_profiles.get_default_video_stream_profile())
-        config.set_align_mode(OBAlignMode.DISABLE)
 
         self._pipeline.start(config)
 
