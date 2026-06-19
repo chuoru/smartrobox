@@ -11,6 +11,7 @@
 # Copyright (c) 2026 HACHIX.  All rights reserved.
 
 # Standard library
+import os
 from dataclasses import dataclass
 
 # Internal library
@@ -146,9 +147,11 @@ def deserialize(text: str) -> list:
 
 
 class RobotProgramAction(BaseAction):
-    """! Action that executes an ordered list of MoveJStep / MoveLStep commands.
+    """! Action that loads and executes a named robot program file.
 
-    Each step is dispatched through the Controller to the named Fairino device.
+    The program file is read from ``{data_folder}/robot_program/{program_name}``
+    at the start of each _run() call, deserialized to move steps, then dispatched
+    through the Controller to the named Fairino device.
     _checkpoint() is called after each step to support cooperative pause/cancel.
     A move that returns False raises RuntimeError, ending the action in FAILED.
     On success or cancellation, result() returns the count of completed steps.
@@ -159,31 +162,49 @@ class RobotProgramAction(BaseAction):
     # =========================================================================
 
     def __init__(
-        self, controller: Controller, device_name: str, steps: list
+        self,
+        controller: Controller,
+        program_name: str,
+        device_name: str,
+        data_folder: str,
     ) -> None:
         """! Initialise the robot program action.
 
         @param controller<Controller>: Controller used to dispatch device calls.
+        @param program_name<str>: Filename inside {data_folder}/robot_program/ to execute.
         @param device_name<str>: Registered name of the Fairino device.
-        @param steps<list>: Ordered list of MoveJStep / MoveLStep instances.
+        @param data_folder<str>: Root data directory (value of config["data_folder"]).
         """
         super().__init__(controller)
+        self._program_name = program_name
         self._device_name = device_name
-        self._steps = list(steps)
+        self._data_folder = data_folder
+
+    def parameters(self) -> dict:
+        """! Return the robot program's configuration parameters.
+
+        @return<dict>: {"program_name": ..., "device_name": ...}
+        """
+        return {"program_name": self._program_name, "device_name": self._device_name}
 
     # =========================================================================
     # PROTECTED METHODS
     # =========================================================================
 
     def _run(self) -> int:
-        """! Execute all steps in order.
+        """! Load program from file and execute all steps in order.
 
         @return<int>: Number of steps successfully completed before DONE or CANCELLED.
+        @raises FileNotFoundError: If the program file does not exist.
+        @raises ValueError: If the program file contains invalid syntax.
         @raises RuntimeError: If a move step returns False (device-level failure).
         @raises TypeError: If an unrecognised step type is encountered.
         """
+        path = os.path.join(self._data_folder, "robot_program", self._program_name)
+        with open(path, "r") as f:
+            steps = deserialize(f.read())
         completed = 0
-        for step in self._steps:
+        for step in steps:
             if isinstance(step, MoveJStep):
                 ok = self._call(
                     self._device_name,

@@ -11,6 +11,8 @@
 # Copyright (c) 2026 HACHIX.  All rights reserved.
 
 # Standard library
+import os
+import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -36,13 +38,26 @@ class _ActionTestMixin:
         self._logger_patcher.start()
         self._controller = MagicMock()
         self._controller.execute.return_value = True
+        self._tmp_dir = tempfile.mkdtemp()
+        self._prog_dir = os.path.join(self._tmp_dir, "robot_program")
+        os.makedirs(self._prog_dir)
 
     def tearDown(self):
         self._logger_patcher.stop()
 
-    def _make(self, steps=None, device_name="left_arm"):
+    def _write_program(self, steps: list, name: str = "prog.txt") -> str:
+        """Write steps to a temp program file and return the filename."""
+        path = os.path.join(self._prog_dir, name)
+        with open(path, "w") as f:
+            f.write(serialize(steps))
+        return name
+
+    def _make(self, steps=None, device_name="left_arm", program_name=None):
+        steps = steps if steps is not None else []
+        if program_name is None:
+            program_name = self._write_program(steps)
         return RobotProgramAction(
-            self._controller, device_name, steps if steps is not None else []
+            self._controller, program_name, device_name, self._tmp_dir
         )
 
 
@@ -129,13 +144,24 @@ class TestRobotProgramActionInit(_ActionTestMixin, unittest.TestCase):
         action.start()
         self.assertTrue(action.wait(timeout=2.0))
 
-    def test_steps_list_is_copied_defensively(self):
-        steps = [MoveJStep(0, 0, 0, 0, 0, 0)]
-        action = self._make(steps=steps)
-        steps.append(MoveLStep(1, 2, 3, 4, 5, 6))
-        action.start()
-        action.wait(timeout=2.0)
-        self.assertEqual(self._controller.execute.call_count, 1)
+
+class TestRobotProgramActionParameters(_ActionTestMixin, unittest.TestCase):
+    """Tests for RobotProgramAction.parameters()."""
+
+    def test_parameters_returns_program_name(self):
+        name = self._write_program([])
+        action = RobotProgramAction(self._controller, name, "left_arm", self._tmp_dir)
+        self.assertEqual(action.parameters()["program_name"], name)
+
+    def test_parameters_returns_device_name(self):
+        name = self._write_program([])
+        action = RobotProgramAction(self._controller, name, "my_robot", self._tmp_dir)
+        self.assertEqual(action.parameters()["device_name"], "my_robot")
+
+    def test_parameters_contains_exactly_two_keys(self):
+        name = self._write_program([])
+        action = RobotProgramAction(self._controller, name, "left_arm", self._tmp_dir)
+        self.assertEqual(set(action.parameters().keys()), {"program_name", "device_name"})
 
 
 class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
@@ -294,17 +320,14 @@ class TestRobotProgramActionRun(_ActionTestMixin, unittest.TestCase):
         self.assertEqual(self._controller.execute.call_count, 2)
         self.assertEqual(action.state(), ActionState.FAILED)
 
-    def test_unknown_step_type_sets_failed_state(self):
-        action = self._make(steps=[{"type": "invalid"}])
+    def test_missing_program_file_sets_failed_state(self):
+        action = RobotProgramAction(
+            self._controller, "nonexistent.txt", "left_arm", self._tmp_dir
+        )
         action.start()
         action.wait(timeout=2.0)
         self.assertEqual(action.state(), ActionState.FAILED)
-
-    def test_unknown_step_type_error_is_type_error(self):
-        action = self._make(steps=[{"type": "invalid"}])
-        action.start()
-        action.wait(timeout=2.0)
-        self.assertIsInstance(action.error(), TypeError)
+        self.assertIsInstance(action.error(), FileNotFoundError)
 
 
 class TestRobotProgramActionCheckpoint(_ActionTestMixin, unittest.TestCase):
@@ -424,12 +447,22 @@ class TestRobotProgramActionDeviceName(_ActionTestMixin, unittest.TestCase):
         self.assertEqual(args[0], "my_robot")
 
     def test_two_actions_with_different_device_names_dispatch_independently(self):
+        tmp_a = tempfile.mkdtemp()
+        tmp_b = tempfile.mkdtemp()
+        prog_a = os.path.join(tmp_a, "robot_program")
+        prog_b = os.path.join(tmp_b, "robot_program")
+        os.makedirs(prog_a)
+        os.makedirs(prog_b)
+        with open(os.path.join(prog_a, "a.txt"), "w") as f:
+            f.write(serialize([MoveJStep(0, 0, 0, 0, 0, 0)]))
+        with open(os.path.join(prog_b, "b.txt"), "w") as f:
+            f.write(serialize([MoveLStep(1, 2, 3, 4, 5, 6)]))
         ctrl_a = MagicMock()
         ctrl_a.execute.return_value = True
         ctrl_b = MagicMock()
         ctrl_b.execute.return_value = True
-        a = RobotProgramAction(ctrl_a, "robot_a", [MoveJStep(0, 0, 0, 0, 0, 0)])
-        b = RobotProgramAction(ctrl_b, "robot_b", [MoveLStep(1, 2, 3, 4, 5, 6)])
+        a = RobotProgramAction(ctrl_a, "a.txt", "robot_a", tmp_a)
+        b = RobotProgramAction(ctrl_b, "b.txt", "robot_b", tmp_b)
         a.start(); b.start()
         a.wait(timeout=2.0); b.wait(timeout=2.0)
         ctrl_a.execute.assert_called_once()

@@ -424,6 +424,14 @@ class TestBaseAction(unittest.TestCase):
         action._pause_event.set()
         self.assertFalse(action._checkpoint())
 
+    # =========================================================================
+    # parameters
+    # =========================================================================
+
+    def test_parameters_returns_empty_dict(self):
+        action = BaseAction(self._controller)
+        self.assertEqual(action.parameters(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

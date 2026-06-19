@@ -165,6 +165,16 @@ class BaseAction:
         """
         return self._error
 
+    def parameters(self) -> dict:
+        """! Return the action's configuration parameters.
+
+        Override in subclasses to expose the parameters the action was
+        created with (e.g. device name, program name).
+
+        @return<dict>: Configuration parameters dict (empty by default).
+        """
+        return {}
+
     # =========================================================================
     # PROTECTED METHODS
     # =========================================================================
