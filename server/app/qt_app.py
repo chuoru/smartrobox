@@ -123,7 +123,8 @@ class Viewport(QOpenGLWidget):
             mujoco.mjtCatBit.mjCAT_ALL,
             self._scn,
         )
-        viewport = mujoco.MjrRect(0, 0, self.width(), self.height())
+        ratio = self.devicePixelRatio()
+        viewport = mujoco.MjrRect(0, 0, int(self.width() * ratio), int(self.height() * ratio))
         mujoco.mjr_render(viewport, self._scn, self._con)
         self._runtime.append(time.time() - t)
         self.updateRuntime.emit(float(np.average(self._runtime)))
