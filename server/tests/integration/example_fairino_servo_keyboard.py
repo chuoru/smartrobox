@@ -103,7 +103,7 @@ def main() -> None:
         "devices": {
             _ROBOT_DEVICE: {
                 "type": "fairino",
-                "params": {"ip": "192.168.58.2", "debug": True},
+                "params": {"ip": "192.168.57.2"},
             }
         }
     }
