@@ -23,7 +23,7 @@ devices:
     type: linkerbot
     params:
       hand_type: "right"
-      hand_joint: "L10"
+      hand_joint: "O6"
       modbus: "/dev/ttyUSB1"
       debug: False
 
