@@ -11,6 +11,7 @@
 # ========================
 # Standard library
 # ========================
+import collections
 import threading
 
 # ========================
@@ -30,12 +31,35 @@ from pyorbbecsdk import (
     DepthFrame,
 )
 
+_QUEUE_MAXSIZE = 5
+
+
+class _FrameQueue:
+    """Bounded queue that silently drops the oldest item when full."""
+
+    def __init__(self, maxsize: int = _QUEUE_MAXSIZE):
+        self._queue: collections.deque = collections.deque(maxlen=maxsize)
+        self._lock = threading.Lock()
+
+    def put(self, item) -> None:
+        with self._lock:
+            self._queue.append(item)
+
+    def get(self):
+        with self._lock:
+            return self._queue.popleft() if self._queue else None
+
+    def clear(self) -> None:
+        with self._lock:
+            self._queue.clear()
+
 
 class OrbbecInterface:
     """
     Orbbec depth camera interface using the SDK callback pipeline.
-    The SDK delivers FrameSet objects via an internal thread; this class
-    decodes and caches the latest color and depth frames thread-safely.
+
+    The SDK delivers FrameSet objects via its own internal thread.
+    Raw frames are queued and decoded lazily on the caller's thread.
     Provides pixel-to-world projection using camera intrinsics.
     """
 
@@ -46,8 +70,8 @@ class OrbbecInterface:
 
         self._pipeline: Pipeline | None = None
 
-        self._color_frame: np.ndarray | None = None  # BGR uint8 H×W×3
-        self._depth_frame: np.ndarray | None = None  # uint16 H×W
+        self._color_q: _FrameQueue = _FrameQueue()
+        self._depth_q: _FrameQueue = _FrameQueue()
 
         self._fx: float | None = None
         self._fy: float | None = None
@@ -56,7 +80,6 @@ class OrbbecInterface:
         self._depth_scale: float | None = None  # raw uint16 → metres
 
         self.running = False
-        self._lock = threading.Lock()
         self._fail_count = 0
 
     # ===========================================================
@@ -111,9 +134,8 @@ class OrbbecInterface:
                 pass
             self._pipeline = None
 
-        with self._lock:
-            self._color_frame = None
-            self._depth_frame = None
+        self._color_q.clear()
+        self._depth_q.clear()
 
     def is_alive(self) -> bool:
         if not self.running:
@@ -128,22 +150,30 @@ class OrbbecInterface:
     # FRAME ACCESS
     # ===========================================================
     def get_color_frame(self) -> np.ndarray | None:
-        """Return a copy of the latest BGR color frame, or None."""
+        """Pop and decode the next queued BGR color frame, or None."""
         if not self.is_alive():
             return None
-        with self._lock:
-            if self._color_frame is None:
-                return None
-            return self._color_frame.copy()
+        frame: ColorFrame | None = self._color_q.get()
+        if frame is None:
+            return None
+        try:
+            return self._decode_color(frame)
+        except Exception:
+            self._fail_count += 1
+            return None
 
     def get_depth_frame(self) -> np.ndarray | None:
-        """Return a copy of the latest raw uint16 depth frame, or None."""
+        """Pop and decode the next queued uint16 depth frame, or None."""
         if not self.is_alive():
             return None
-        with self._lock:
-            if self._depth_frame is None:
-                return None
-            return self._depth_frame.copy()
+        frame: DepthFrame | None = self._depth_q.get()
+        if frame is None:
+            return None
+        try:
+            return self._decode_depth(frame)
+        except Exception:
+            self._fail_count += 1
+            return None
 
     # ===========================================================
     # COORDINATE PROJECTION
@@ -160,16 +190,15 @@ class OrbbecInterface:
         if self._fx is None or self._depth_scale is None:
             return None
 
-        with self._lock:
-            if self._depth_frame is None:
-                return None
-            depth_copy = self._depth_frame.copy()
+        depth = self.get_depth_frame()
+        if depth is None:
+            return None
 
-        h, w = depth_copy.shape
+        h, w = depth.shape
         if not (0 <= v < h and 0 <= u < w):
             return None
 
-        raw = int(depth_copy[v, u])
+        raw = int(depth[v, u])
         if raw == 0:
             return None
 
@@ -182,32 +211,20 @@ class OrbbecInterface:
     # INTERNAL
     # ===========================================================
     def _on_frame(self, frame_set: FrameSet):
-        """SDK callback — invoked from the SDK's internal thread per frame."""
+        """SDK callback — kept lightweight; just queues raw frames."""
         if frame_set is None or not self.running:
             return
 
         color_frame: ColorFrame | None = frame_set.get_color_frame()
         depth_frame: DepthFrame | None = frame_set.get_depth_frame()
 
-        if color_frame is None and depth_frame is None:
-            return
+        if color_frame is not None:
+            self._color_q.put(color_frame)
 
-        try:
-            color_bgr = self._decode_color(color_frame) if color_frame is not None else None
-            depth_arr = self._decode_depth(depth_frame) if depth_frame is not None else None
-
-            if depth_frame is not None and self._depth_scale is None:
+        if depth_frame is not None:
+            if self._depth_scale is None:
                 self._depth_scale = depth_frame.get_depth_scale()
-
-            self._fail_count = 0
-            with self._lock:
-                if color_bgr is not None:
-                    self._color_frame = color_bgr
-                if depth_arr is not None:
-                    self._depth_frame = depth_arr
-
-        except Exception:
-            self._fail_count += 1
+            self._depth_q.put(depth_frame)
 
     @staticmethod
     def _decode_color(frame: ColorFrame) -> np.ndarray:
