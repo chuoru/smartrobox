@@ -93,7 +93,6 @@ class OrbbecInterface:
         config.set_align_mode(OBAlignMode.SW_MODE)
 
         self._pipeline.start(config)
-        self._pipeline.enable_frame_sync()
 
         cam_param = self._pipeline.get_camera_param()
         intr = cam_param.rgb_intrinsic
