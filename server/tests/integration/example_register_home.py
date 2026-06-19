@@ -93,11 +93,11 @@ def main() -> None:
         "devices": {
             _LEFT_ARM: {
                 "type": "fairino",
-                "params": {"ip": "192.168.58.2", "debug": True},
+                "params": {"ip": "192.168.58.2"},
             },
             _RIGHT_ARM: {
                 "type": "fairino",
-                "params": {"ip": "192.168.58.2", "debug": True},
+                "params": {"ip": "192.168.58.2"},
             },
         }
     }
