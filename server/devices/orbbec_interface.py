@@ -57,6 +57,7 @@ class OrbbecInterface:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._fail_count = 0
+        self._start_error: Exception | None = None
 
     # ===========================================================
     # CONNECTION
@@ -81,38 +82,32 @@ class OrbbecInterface:
 
         device = device_list.get_device_by_index(self.device_index)
         self._pipeline = Pipeline(device)
+        self._start_error = None
 
-        self._pipeline.start()
-
-        cam_param = self._pipeline.get_camera_param()
-        intr = cam_param.rgb_intrinsic
-        self._fx = intr.fx
-        self._fy = intr.fy
-        self._cx = intr.cx
-        self._cy = intr.cy
-
-        self.running = True
-        self._fail_count = 0
-
+        ready = threading.Event()
         self._thread = threading.Thread(
             target=self._capture_loop,
+            args=(ready,),
             daemon=True,
             name=f"Orbbec-{self.device_index}",
         )
         self._thread.start()
+
+        if not ready.wait(timeout=5.0):
+            self._pipeline = None
+            self._context = None
+            raise RuntimeError("Orbbec pipeline timed out during startup")
+
+        if self._start_error is not None:
+            err = self._start_error
+            self._start_error = None
+            raise err
 
     def stop(self):
         self.running = False
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-
-        if self._pipeline:
-            try:
-                self._pipeline.stop()
-            except Exception:
-                pass
-            self._pipeline = None
 
         self._context = None
 
@@ -186,7 +181,24 @@ class OrbbecInterface:
     # ===========================================================
     # INTERNAL
     # ===========================================================
-    def _capture_loop(self):
+    def _capture_loop(self, ready: threading.Event):
+        try:
+            self._pipeline.start()
+            cam_param = self._pipeline.get_camera_param()
+            intr = cam_param.rgb_intrinsic
+            self._fx = intr.fx
+            self._fy = intr.fy
+            self._cx = intr.cx
+            self._cy = intr.cy
+            self._fail_count = 0
+            self.running = True
+        except Exception as exc:
+            self._start_error = exc
+            ready.set()
+            return
+
+        ready.set()
+
         while self.running:
             if self._pipeline is None:
                 self._fail_count += 1
