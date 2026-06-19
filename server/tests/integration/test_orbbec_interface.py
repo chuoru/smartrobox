@@ -52,7 +52,7 @@ class TestOrbbecInterfaceIntegration(unittest.TestCase):
     # =========================================================================
 
     def _wait_for_frame(self, timeout: float = _FRAME_TIMEOUT) -> bool:
-        """! Poll until a color frame is available or timeout elapses.
+        """! Poll until the first color frame is delivered by the SDK callback.
 
         @param timeout<float>: Maximum seconds to wait.
         @return<bool>: True if a frame arrived within the deadline.
@@ -79,7 +79,7 @@ class TestOrbbecInterfaceIntegration(unittest.TestCase):
         self.assertGreater(self.iface._fy, 0.0)
 
     def test_capture_returns_color_and_depth_frames(self):
-        # Arrange — wait for the capture thread to deliver the first frame
+        # Arrange — wait for the SDK callback to deliver the first frame
         got_frame = self._wait_for_frame()
         self.assertTrue(got_frame, "Timed out waiting for first frame from camera")
 
@@ -99,7 +99,7 @@ class TestOrbbecInterfaceIntegration(unittest.TestCase):
         self.assertEqual(str(depth.dtype), "uint16")
 
     def test_pixel_to_world_returns_plausible_3d_point(self):
-        # Arrange
+        # Arrange — wait for the SDK callback to deliver the first frame
         got_frame = self._wait_for_frame()
         self.assertTrue(got_frame, "Timed out waiting for first frame from camera")
 

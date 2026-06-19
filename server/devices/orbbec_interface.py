@@ -73,6 +73,12 @@ class OrbbecInterface:
         self._color_q: _FrameQueue = _FrameQueue()
         self._depth_q: _FrameQueue = _FrameQueue()
 
+        # Latest decoded frames — updated by get_color_frame / get_depth_frame.
+        # Callers always receive the most recent frame even when the queue is empty.
+        self._latest_color: np.ndarray | None = None
+        self._latest_depth: np.ndarray | None = None
+        self._lock = threading.Lock()
+
         self._fx: float | None = None
         self._fy: float | None = None
         self._cx: float | None = None
@@ -136,6 +142,9 @@ class OrbbecInterface:
 
         self._color_q.clear()
         self._depth_q.clear()
+        with self._lock:
+            self._latest_color = None
+            self._latest_depth = None
 
     def is_alive(self) -> bool:
         if not self.running:
@@ -150,30 +159,38 @@ class OrbbecInterface:
     # FRAME ACCESS
     # ===========================================================
     def get_color_frame(self) -> np.ndarray | None:
-        """Pop and decode the next queued BGR color frame, or None."""
+        """Return the latest BGR color frame, or None if none has arrived yet."""
         if not self.is_alive():
             return None
-        frame: ColorFrame | None = self._color_q.get()
-        if frame is None:
-            return None
-        try:
-            return self._decode_color(frame)
-        except Exception:
-            self._fail_count += 1
-            return None
+        while True:
+            frame: ColorFrame | None = self._color_q.get()
+            if frame is None:
+                break
+            try:
+                decoded = self._decode_color(frame)
+                with self._lock:
+                    self._latest_color = decoded
+            except Exception:
+                self._fail_count += 1
+        with self._lock:
+            return self._latest_color.copy() if self._latest_color is not None else None
 
     def get_depth_frame(self) -> np.ndarray | None:
-        """Pop and decode the next queued uint16 depth frame, or None."""
+        """Return the latest uint16 depth frame, or None if none has arrived yet."""
         if not self.is_alive():
             return None
-        frame: DepthFrame | None = self._depth_q.get()
-        if frame is None:
-            return None
-        try:
-            return self._decode_depth(frame)
-        except Exception:
-            self._fail_count += 1
-            return None
+        while True:
+            frame: DepthFrame | None = self._depth_q.get()
+            if frame is None:
+                break
+            try:
+                decoded = self._decode_depth(frame)
+                with self._lock:
+                    self._latest_depth = decoded
+            except Exception:
+                self._fail_count += 1
+        with self._lock:
+            return self._latest_depth.copy() if self._latest_depth is not None else None
 
     # ===========================================================
     # COORDINATE PROJECTION
@@ -190,6 +207,7 @@ class OrbbecInterface:
         if self._fx is None or self._depth_scale is None:
             return None
 
+        # Refresh cache from any pending queue frames, then read cache.
         depth = self.get_depth_frame()
         if depth is None:
             return None
