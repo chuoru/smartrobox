@@ -5,3 +5,6 @@ jinja2
 websockets
 pyorbbecsdk2
 numpy
+minimalmodbus
+pyserial
+pymodbus
