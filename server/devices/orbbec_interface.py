@@ -12,7 +12,6 @@
 # Standard library
 # ========================
 import threading
-import time
 
 # ========================
 # External library
@@ -20,9 +19,13 @@ import time
 import cv2
 import numpy as np
 from pyorbbecsdk import (
+    Config,
     Context,
-    Pipeline,
+    FrameSet,
+    OBError,
+    OBSensorType,
     OBFormat,
+    Pipeline,
     ColorFrame,
     DepthFrame,
 )
@@ -30,13 +33,13 @@ from pyorbbecsdk import (
 
 class OrbbecInterface:
     """
-    One Orbbec depth camera = one capture thread.
-    Captures color + depth frames continuously.
+    Orbbec depth camera interface using the SDK callback pipeline.
+    The SDK delivers FrameSet objects via an internal thread; this class
+    decodes and caches the latest color and depth frames thread-safely.
     Provides pixel-to-world projection using camera intrinsics.
     """
 
     _MAX_FAIL = 10
-    _WAIT_TIMEOUT_MS = 100
 
     def __init__(self, device_index: int = 0):
         self.device_index = device_index
@@ -54,9 +57,7 @@ class OrbbecInterface:
 
         self.running = False
         self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
         self._fail_count = 0
-        self._start_error: Exception | None = None
 
     # ===========================================================
     # CONNECTION
@@ -65,7 +66,6 @@ class OrbbecInterface:
         if self.running:
             return
 
-        # Validate device availability before spawning the thread.
         ctx = Context()
         count = ctx.query_devices().get_count()
         del ctx
@@ -79,29 +79,37 @@ class OrbbecInterface:
                 f"(found {count} device(s))"
             )
 
-        self._start_error = None
-        ready = threading.Event()
-        self._thread = threading.Thread(
-            target=self._capture_loop,
-            args=(ready,),
-            daemon=True,
-            name=f"Orbbec-{self.device_index}",
-        )
-        self._thread.start()
+        self._pipeline = Pipeline()
+        config = Config()
 
-        if not ready.wait(timeout=5.0):
-            raise RuntimeError("Orbbec pipeline timed out during startup")
+        for sensor_type in [OBSensorType.COLOR_SENSOR, OBSensorType.DEPTH_SENSOR]:
+            try:
+                profiles = self._pipeline.get_stream_profile_list(sensor_type)
+                config.enable_stream(profiles.get_default_video_stream_profile())
+            except OBError as exc:
+                raise RuntimeError(f"Failed to configure sensor {sensor_type}: {exc}")
 
-        if self._start_error is not None:
-            err = self._start_error
-            self._start_error = None
-            raise err
+        self._pipeline.start(config, self._on_frame)
+
+        cam_param = self._pipeline.get_camera_param()
+        intr = cam_param.rgb_intrinsic
+        self._fx = intr.fx
+        self._fy = intr.fy
+        self._cx = intr.cx
+        self._cy = intr.cy
+
+        self._fail_count = 0
+        self.running = True
 
     def stop(self):
         self.running = False
 
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+        if self._pipeline:
+            try:
+                self._pipeline.stop()
+            except Exception:
+                pass
+            self._pipeline = None
 
         with self._lock:
             self._color_frame = None
@@ -173,67 +181,33 @@ class OrbbecInterface:
     # ===========================================================
     # INTERNAL
     # ===========================================================
-    def _capture_loop(self, ready: threading.Event):
-        try:
-            self._pipeline = Pipeline()
-            self._pipeline.start()
-            cam_param = self._pipeline.get_camera_param()
-            intr = cam_param.rgb_intrinsic
-            self._fx = intr.fx
-            self._fy = intr.fy
-            self._cx = intr.cx
-            self._cy = intr.cy
-            self._fail_count = 0
-            self.running = True
-        except Exception as exc:
-            self._start_error = exc
-            ready.set()
+    def _on_frame(self, frame_set: FrameSet):
+        """SDK callback — invoked from the SDK's internal thread per frame."""
+        if frame_set is None or not self.running:
             return
 
-        ready.set()
+        color_frame: ColorFrame | None = frame_set.get_color_frame()
+        depth_frame: DepthFrame | None = frame_set.get_depth_frame()
 
-        while self.running:
-            try:
-                frameset = self._pipeline.wait_for_frames(self._WAIT_TIMEOUT_MS)
-            except Exception:
-                self._fail_count += 1
-                time.sleep(0.05)
-                continue
+        if color_frame is None and depth_frame is None:
+            return
 
-            if frameset is None:
-                time.sleep(0.01)
-                continue
+        try:
+            color_bgr = self._decode_color(color_frame) if color_frame is not None else None
+            depth_arr = self._decode_depth(depth_frame) if depth_frame is not None else None
 
-            color_frame: ColorFrame | None = frameset.get_color_frame()
-            depth_frame: DepthFrame | None = frameset.get_depth_frame()
+            if depth_frame is not None and self._depth_scale is None:
+                self._depth_scale = depth_frame.get_depth_scale()
 
-            if color_frame is None and depth_frame is None:
-                time.sleep(0.01)
-                continue
+            self._fail_count = 0
+            with self._lock:
+                if color_bgr is not None:
+                    self._color_frame = color_bgr
+                if depth_arr is not None:
+                    self._depth_frame = depth_arr
 
-            try:
-                color_bgr = self._decode_color(color_frame) if color_frame is not None else None
-                depth_arr = self._decode_depth(depth_frame) if depth_frame is not None else None
-
-                if depth_frame is not None and self._depth_scale is None:
-                    self._depth_scale = depth_frame.get_depth_scale()
-
-                self._fail_count = 0
-                with self._lock:
-                    if color_bgr is not None:
-                        self._color_frame = color_bgr
-                    if depth_arr is not None:
-                        self._depth_frame = depth_arr
-
-            except Exception:
-                self._fail_count += 1
-
-        if self._pipeline:
-            try:
-                self._pipeline.stop()
-            except Exception:
-                pass
-            self._pipeline = None
+        except Exception:
+            self._fail_count += 1
 
     @staticmethod
     def _decode_color(frame: ColorFrame) -> np.ndarray:
