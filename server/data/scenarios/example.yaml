@@ -1,0 +1,29 @@
+name: example
+steps:
+  # Move the robot arm to the pick position
+  - type: robot_program
+    device: fairino
+    program: move_to_pick.txt
+
+  # Thread 1: close the hand in two stages
+  # Thread 2: arm tilts the wrist then holds while grasping
+  - type: parallel
+    threads:
+      - steps:
+          - type: grasp
+            device: left_hand
+            grasp_level: 3
+            torque_limit: 128
+
+      - steps:
+          - type: robot_program
+            device: fairino
+            program: tilt_wrist.txt
+          - type: robot_program
+            device: fairino
+            program: hold_position.txt
+
+  # Lift and move to the place position
+  - type: robot_program
+    device: fairino
+    program: move_to_place.txt
