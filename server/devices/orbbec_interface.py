@@ -25,7 +25,6 @@ from pyorbbecsdk import (
     FrameSet,
     OBError,
     OBSensorType,
-    OBFormat,
     Pipeline,
     ColorFrame,
     DepthFrame,
@@ -248,21 +247,16 @@ class OrbbecInterface:
     def _decode_color(frame: ColorFrame) -> np.ndarray:
         data = np.frombuffer(frame.get_data(), dtype=np.uint8)
         h, w = frame.get_height(), frame.get_width()
-        fmt = frame.get_format()
 
-        if fmt == OBFormat.MJPG:
-            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError("cv2.imdecode failed for MJPEG frame")
-            return img
-
-        if fmt == OBFormat.RGB:
+        if len(data) == h * w * 3:
+            # Uncompressed RGB (3 bytes/pixel)
             return cv2.cvtColor(data.reshape(h, w, 3), cv2.COLOR_RGB2BGR)
 
-        if fmt == OBFormat.BGR:
-            return data.reshape(h, w, 3).copy()
-
-        return cv2.cvtColor(data.reshape(h, w, 3), cv2.COLOR_RGB2BGR)
+        # Compressed — decode as JPEG/MJPEG
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("cv2.imdecode failed for color frame")
+        return img
 
     @staticmethod
     def _decode_depth(frame: DepthFrame) -> np.ndarray:
