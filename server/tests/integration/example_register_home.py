@@ -14,7 +14,6 @@
 # Standard library
 import os
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -30,6 +29,9 @@ _LEFT_ARM = "left_arm"
 _RIGHT_ARM = "right_arm"
 _LEFT_HOME_KEY = "home_left"
 _RIGHT_HOME_KEY = "home_right"
+_DEVICE_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
+)
 _TEACHING_POINT_FILE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "teaching_point.yaml")
 )
@@ -89,51 +91,30 @@ def _save_home(key: str, joints: list[float], pose: list[float]) -> None:
 
 def main() -> None:
     """! Open both arms, read current poses, and register them as home positions."""
-    device_cfg = {
-        "devices": {
-            _LEFT_ARM: {
-                "type": "fairino",
-                "params": {"ip": "192.168.58.2"},
-            },
-            _RIGHT_ARM: {
-                "type": "fairino",
-                "params": {"ip": "192.168.58.2"},
-            },
-        }
-    }
+    ctrl = Controller(Config(_DEVICE_FILE))
 
-    fd, cfg_path = tempfile.mkstemp(suffix=".yaml")
+    opened: list[str] = []
+    for device in (_LEFT_ARM, _RIGHT_ARM):
+        if not ctrl.open(device):
+            print(f"[example] Failed to open '{device}'")
+            for d in opened:
+                ctrl.close(d)
+            return
+        opened.append(device)
+
     try:
-        with os.fdopen(fd, "w") as f:
-            yaml.safe_dump(device_cfg, f)
-
-        ctrl = Controller(Config(cfg_path))
-
-        opened: list[str] = []
-        for device in (_LEFT_ARM, _RIGHT_ARM):
-            if not ctrl.open(device):
-                print(f"[example] Failed to open '{device}'")
-                for d in opened:
-                    ctrl.close(d)
+        for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
+            state = _read_arm_state(ctrl, device)
+            if state is None:
                 return
-            opened.append(device)
-
-        try:
-            for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
-                state = _read_arm_state(ctrl, device)
-                if state is None:
-                    return
-                joints, pose = state
-                print(f"[example] {device} joints    : {[f'{j:+.3f}' for j in joints]}")
-                print(f"[example] {device} cartesian : {[f'{v:+.3f}' for v in pose]}")
-                _save_home(key, joints, pose)
-
-        finally:
-            for device in opened:
-                ctrl.close(device)
+            joints, pose = state
+            print(f"[example] {device} joints    : {[f'{j:+.3f}' for j in joints]}")
+            print(f"[example] {device} cartesian : {[f'{v:+.3f}' for v in pose]}")
+            _save_home(key, joints, pose)
 
     finally:
-        os.unlink(cfg_path)
+        for device in opened:
+            ctrl.close(device)
 
 
 if __name__ == "__main__":

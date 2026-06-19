@@ -2,13 +2,13 @@ devices:
   left_arm:
     type: fairino
     params:
-      ip: "192.168.58.2"
+      ip: "192.168.57.2"
       debug: False
 
   right_arm:
     type: fairino
     params:
-      ip: "192.168.58.2"
+      ip: "192.168.57.3"
       debug: False
 
   left_hand:

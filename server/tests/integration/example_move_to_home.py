@@ -13,7 +13,6 @@
 # Standard library
 import os
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -30,6 +29,9 @@ _RIGHT_ARM = "right_arm"
 _LEFT_HOME_KEY = "home_left"
 _RIGHT_HOME_KEY = "home_right"
 _MOVE_VEL = 20.0
+_DEVICE_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
+)
 _TEACHING_POINT_FILE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "teaching_point.yaml")
 )
@@ -60,58 +62,37 @@ def _load_home_joints(key: str) -> list[float] | None:
 
 def main() -> None:
     """! Open both arms and move each to its saved home joint position."""
-    device_cfg = {
-        "devices": {
-            _LEFT_ARM: {
-                "type": "fairino",
-                "params": {"ip": "192.168.58.2", "debug": True},
-            },
-            _RIGHT_ARM: {
-                "type": "fairino",
-                "params": {"ip": "192.168.58.2", "debug": True},
-            },
-        }
-    }
+    ctrl = Controller(Config(_DEVICE_FILE))
 
-    fd, cfg_path = tempfile.mkstemp(suffix=".yaml")
+    opened: list[str] = []
+    for device in (_LEFT_ARM, _RIGHT_ARM):
+        if not ctrl.open(device):
+            print(f"[example] Failed to open '{device}'")
+            for d in opened:
+                ctrl.close(d)
+            return
+        opened.append(device)
+
     try:
-        with os.fdopen(fd, "w") as f:
-            yaml.safe_dump(device_cfg, f)
-
-        ctrl = Controller(Config(cfg_path))
-
-        opened: list[str] = []
-        for device in (_LEFT_ARM, _RIGHT_ARM):
-            if not ctrl.open(device):
-                print(f"[example] Failed to open '{device}'")
-                for d in opened:
-                    ctrl.close(d)
+        for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
+            joints = _load_home_joints(key)
+            if joints is None:
                 return
-            opened.append(device)
 
-        try:
-            for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
-                joints = _load_home_joints(key)
-                if joints is None:
-                    return
+            print(
+                f"[example] Moving '{device}' to home "
+                f"[{', '.join(f'{j:+.3f}' for j in joints)}] ..."
+            )
+            ok = ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL)
+            if not ok:
+                print(f"[example] movej failed for '{device}'")
+                return
 
-                print(
-                    f"[example] Moving '{device}' to home "
-                    f"[{', '.join(f'{j:+.3f}' for j in joints)}] ..."
-                )
-                ok = ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL)
-                if not ok:
-                    print(f"[example] movej failed for '{device}'")
-                    return
-
-                print(f"[example] '{device}' reached home.")
-
-        finally:
-            for device in opened:
-                ctrl.close(device)
+            print(f"[example] '{device}' reached home.")
 
     finally:
-        os.unlink(cfg_path)
+        for device in opened:
+            ctrl.close(device)
 
 
 if __name__ == "__main__":
