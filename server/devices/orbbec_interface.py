@@ -118,7 +118,13 @@ class OrbbecInterface:
             except OBError as exc:
                 raise RuntimeError(f"Failed to configure sensor {sensor_type}: {exc}")
 
-        self._pipeline.start(config, self._on_frame)
+        self._fail_count = 0
+        self.running = True
+        try:
+            self._pipeline.start(config, self._on_frame)
+        except Exception:
+            self.running = False
+            raise
 
         cam_param = self._pipeline.get_camera_param()
         intr = cam_param.rgb_intrinsic
@@ -126,9 +132,6 @@ class OrbbecInterface:
         self._fy = intr.fy
         self._cx = intr.cx
         self._cy = intr.cy
-
-        self._fail_count = 0
-        self.running = True
 
     def stop(self):
         self.running = False
