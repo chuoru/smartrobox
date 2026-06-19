@@ -80,7 +80,7 @@ def main() -> None:
         "devices": {
             _DEVICE_NAME: {
                 "type": "orbbec",
-                "params": {"device_index": 0},
+                "params": {"device_index": 2},
             }
         }
     }
