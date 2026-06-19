@@ -33,11 +33,10 @@ class GraspAction(BaseAction):
     _checkpoint() is called after the prepare move to support cooperative
     pause/resume/cancel between phases.
 
-    L10 joint layout (pose index → joint):
-      0  thumb_cmc_pitch   4  ring_mcp_pitch    8  pinky_mcp_roll
-      1  thumb_cmc_roll    5  pinky_mcp_pitch   9  thumb_cmc_yaw
-      2  index_mcp_pitch   6  index_mcp_roll
-      3  middle_mcp_pitch  7  ring_mcp_roll
+    O6 joint layout (pose index → joint):
+      0  thumb_cmc_pitch   3  middle_mcp_pitch
+      1  thumb_cmc_yaw     4  ring_mcp_pitch
+      2  index_mcp_pitch   5  pinky_mcp_pitch
     """
 
     _FINGER_INDICES_BY_LEVEL: dict[int, list[int]] = {
@@ -96,7 +95,7 @@ class GraspAction(BaseAction):
         @return<bool>: True on successful completion, False if cancelled.
         @raises RuntimeError: If any device call returns False.
         """
-        torque = [self._torque_limit] * 10
+        torque = [self._torque_limit] * 6
         if not self._call(self._device_name, "set_torque", torque):
             raise RuntimeError(f"set_torque failed on device '{self._device_name}'")
         prepare, grasp = self._build_poses()
@@ -117,15 +116,15 @@ class GraspAction(BaseAction):
     def _build_poses(self) -> tuple[list[int], list[int]]:
         """! Build the prepare and grasp pose arrays for the configured level.
 
-        @return<tuple[list[int], list[int]]>: (prepare_pose, grasp_pose), each length 10.
+        @return<tuple[list[int], list[int]]>: (prepare_pose, grasp_pose), each length 6.
         """
-        prepare = [0] * 10
-        grasp = [0] * 10
+        prepare = [0] * 6
+        grasp = [0] * 6
 
         # Thumb abduction in for both phases; thumb pitch closes during grasp
-        prepare[9] = _FULL  # thumb_cmc_yaw
+        prepare[1] = _FULL  # thumb_cmc_yaw
         grasp[0] = _FULL    # thumb_cmc_pitch
-        grasp[9] = _FULL    # thumb_cmc_yaw
+        grasp[1] = _FULL    # thumb_cmc_yaw
 
         fingers = self._FINGER_INDICES_BY_LEVEL[self._grasp_level]
         for idx in fingers:

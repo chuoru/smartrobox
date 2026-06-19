@@ -28,7 +28,7 @@ from app.controller import Controller
 
 _DEVICE_NAME = "left_hand"
 _MODBUS = "/dev/ttyUSB0"
-_OPEN_POSE = [0] * 10
+_OPEN_POSE = [0] * 6
 _TORQUE_LIMIT = 180
 _MOVEMENT_DELAY = 2.0
 _GRASP_TIMEOUT = 10.0
@@ -58,7 +58,7 @@ class TestGraspActionIntegration(unittest.TestCase):
                     "type": "linkerbot",
                     "params": {
                         "hand_type": "left",
-                        "hand_joint": "L10",
+                        "hand_joint": "O6",
                         "modbus": _MODBUS,
                     },
                 }

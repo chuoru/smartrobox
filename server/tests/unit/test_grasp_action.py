@@ -103,7 +103,7 @@ class TestGraspActionPoses(_GraspTestMixin, unittest.TestCase):
 
     def test_level1_prepare_thumb_yaw_in(self):
         prepare, _ = self._run_and_get_move_calls(1)
-        self.assertEqual(prepare[9], 255)  # thumb_cmc_yaw
+        self.assertEqual(prepare[1], 255)  # thumb_cmc_yaw
 
     def test_level1_prepare_index_half(self):
         prepare, _ = self._run_and_get_move_calls(1)
@@ -120,7 +120,7 @@ class TestGraspActionPoses(_GraspTestMixin, unittest.TestCase):
 
     def test_level1_grasp_thumb_yaw_in(self):
         _, grasp = self._run_and_get_move_calls(1)
-        self.assertEqual(grasp[9], 255)  # thumb_cmc_yaw
+        self.assertEqual(grasp[1], 255)  # thumb_cmc_yaw
 
     def test_level1_grasp_index_full(self):
         _, grasp = self._run_and_get_move_calls(1)
@@ -171,29 +171,28 @@ class TestGraspActionPoses(_GraspTestMixin, unittest.TestCase):
 
     def test_level4_prepare_only_thumb_yaw(self):
         prepare, _ = self._run_and_get_move_calls(4)
-        self.assertEqual(prepare[9], 255)  # thumb_cmc_yaw
-        for idx in [0, 1, 2, 3, 4, 5, 6, 7, 8]:
+        self.assertEqual(prepare[1], 255)  # thumb_cmc_yaw
+        for idx in [0, 2, 3, 4, 5]:
             self.assertEqual(prepare[idx], 0)
 
     def test_level4_grasp_all_pitch_joints_in(self):
         _, grasp = self._run_and_get_move_calls(4)
         self.assertEqual(grasp[0], 255)  # thumb_cmc_pitch
+        self.assertEqual(grasp[1], 255)  # thumb_cmc_yaw
         self.assertEqual(grasp[2], 255)  # index
         self.assertEqual(grasp[3], 255)  # middle
         self.assertEqual(grasp[4], 255)  # ring
         self.assertEqual(grasp[5], 255)  # pinky
-        self.assertEqual(grasp[9], 255)  # thumb_cmc_yaw
 
-    def test_level4_grasp_roll_joints_open(self):
+    def test_level4_grasp_all_joints_fully_closed(self):
         _, grasp = self._run_and_get_move_calls(4)
-        for idx in [1, 6, 7, 8]:
-            self.assertEqual(grasp[idx], 0)
+        self.assertTrue(all(v == 255 for v in grasp))
 
-    def test_poses_are_length_10(self):
+    def test_poses_are_length_6(self):
         for level in (1, 2, 3, 4):
             poses = self._run_and_get_move_calls(level)
             for pose in poses:
-                self.assertEqual(len(pose), 10)
+                self.assertEqual(len(pose), 6)
 
 
 class TestGraspActionDispatch(_GraspTestMixin, unittest.TestCase):
@@ -213,12 +212,12 @@ class TestGraspActionDispatch(_GraspTestMixin, unittest.TestCase):
         first_call = self._controller.execute.call_args_list[0]
         self.assertEqual(first_call[0][0], "right_hand")
 
-    def test_set_torque_value_repeated_10_times(self):
+    def test_set_torque_value_repeated_6_times(self):
         action = self._make(torque_limit=200)
         action.start()
         action.wait(timeout=2.0)
         first_call = self._controller.execute.call_args_list[0]
-        self.assertEqual(first_call[0][2], [200] * 10)
+        self.assertEqual(first_call[0][2], [200] * 6)
 
     def test_prepare_move_dispatched_to_correct_device(self):
         action = self._make(device_name="my_hand")
