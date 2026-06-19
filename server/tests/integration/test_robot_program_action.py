@@ -25,7 +25,10 @@ from app.config import Config
 from app.controller import Controller
 
 
-_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+_SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
+_DATA_FOLDER = os.path.join(
+    _SERVER_DIR, "projects", Config(os.path.join(_SERVER_DIR, "config.yaml")).get("projects")
+)
 _PROGRAM_NAME = "sample.txt"
 _DEVICE_NAME = "left_arm"
 _ARM_IP = "192.168.58.2"

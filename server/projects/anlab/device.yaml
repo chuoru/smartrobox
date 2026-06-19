@@ -1,0 +1,38 @@
+devices:
+  left_arm:
+    type: fairino
+    params:
+      ip: "192.168.58.2"
+      debug: False
+
+  right_arm:
+    type: fairino
+    params:
+      ip: "192.168.58.2"
+      debug: False
+
+  left_hand:
+    type: linkerbot
+    params:
+      hand_type: "left"
+      hand_joint: "O6"
+      modbus: "/dev/ttyUSB0"
+      debug: False
+
+  right_hand:
+    type: linkerbot
+    params:
+      hand_type: "right"
+      hand_joint: "L10"
+      modbus: "/dev/ttyUSB1"
+      debug: False
+
+  left_camera:
+    type: orbbec
+    params:
+      device_index: 0
+
+  right_camera:
+    type: orbbec  
+    params:
+      device_index: 1

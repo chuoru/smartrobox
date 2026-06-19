@@ -16,6 +16,7 @@ mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("image/svg+xml", ".svg")
 
 # Internal library
+from app.config import Config
 from app.socket import websocket_endpoint
 
 
@@ -30,6 +31,8 @@ class RestServer:
     current_folder = os.path.dirname(os.path.abspath(__file__))
     parent_folder = os.path.dirname(current_folder)
     dist_folder = os.path.join(parent_folder, "user_interface")
+    _server_config = Config(os.path.join(parent_folder, "config.yaml"))
+    project_folder = os.path.join(parent_folder, "projects", _server_config.get("projects"))
 
     def __init__(self):
         """! Initialize the REST server with the given configuration."""
