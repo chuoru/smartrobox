@@ -31,7 +31,7 @@ from pyorbbecsdk import (
 class OrbbecInterface:
     """
     One Orbbec depth camera = one capture thread.
-    Captures aligned color + depth frames continuously.
+    Captures color + depth frames continuously.
     Provides pixel-to-world projection using camera intrinsics.
     """
 
@@ -41,7 +41,6 @@ class OrbbecInterface:
     def __init__(self, device_index: int = 0):
         self.device_index = device_index
 
-        self._context: Context | None = None
         self._pipeline: Pipeline | None = None
 
         self._color_frame: np.ndarray | None = None  # BGR uint8 H×W×3
@@ -66,24 +65,21 @@ class OrbbecInterface:
         if self.running:
             return
 
-        self._context = Context()
-        device_list = self._context.query_devices()
+        # Validate device availability before spawning the thread.
+        ctx = Context()
+        count = ctx.query_devices().get_count()
+        del ctx
 
-        if device_list.get_count() == 0:
-            self._context = None
+        if count == 0:
             raise RuntimeError("No Orbbec devices found")
 
-        if self.device_index >= device_list.get_count():
-            self._context = None
+        if self.device_index >= count:
             raise RuntimeError(
                 f"Orbbec device index {self.device_index} out of range "
-                f"(found {device_list.get_count()} device(s))"
+                f"(found {count} device(s))"
             )
 
-        device = device_list.get_device_by_index(self.device_index)
-        self._pipeline = Pipeline(device)
         self._start_error = None
-
         ready = threading.Event()
         self._thread = threading.Thread(
             target=self._capture_loop,
@@ -94,8 +90,6 @@ class OrbbecInterface:
         self._thread.start()
 
         if not ready.wait(timeout=5.0):
-            self._pipeline = None
-            self._context = None
             raise RuntimeError("Orbbec pipeline timed out during startup")
 
         if self._start_error is not None:
@@ -108,8 +102,6 @@ class OrbbecInterface:
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-
-        self._context = None
 
         with self._lock:
             self._color_frame = None
@@ -183,6 +175,7 @@ class OrbbecInterface:
     # ===========================================================
     def _capture_loop(self, ready: threading.Event):
         try:
+            self._pipeline = Pipeline()
             self._pipeline.start()
             cam_param = self._pipeline.get_camera_param()
             intr = cam_param.rgb_intrinsic
@@ -200,11 +193,6 @@ class OrbbecInterface:
         ready.set()
 
         while self.running:
-            if self._pipeline is None:
-                self._fail_count += 1
-                time.sleep(0.2)
-                continue
-
             try:
                 frameset = self._pipeline.wait_for_frames(self._WAIT_TIMEOUT_MS)
             except Exception:
