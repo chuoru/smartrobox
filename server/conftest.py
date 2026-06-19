@@ -7,4 +7,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 # Stub hardware SDKs that are not installed in the test environment.
 # Device classes import these at module level; without stubs the entire
 # controller module fails to load and no unit tests can run.
-sys.modules.setdefault("pyorbbecsdk", MagicMock())
+_pyorbbecsdk_mock = MagicMock()
+_pyorbbecsdk_mock.OBFormat.MJPG = "MJPG"
+_pyorbbecsdk_mock.OBFormat.RGB = "RGB"
+_pyorbbecsdk_mock.OBFormat.BGR = "BGR"
+sys.modules.setdefault("pyorbbecsdk", _pyorbbecsdk_mock)

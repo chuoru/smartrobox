@@ -247,6 +247,7 @@ class TestController(unittest.TestCase):
             self._ctrl.execute("left_arm", "_connect")
 
     def test_execute_raises_attribute_error_for_missing_method(self):
+        self._fairino_instance.nonexistent_method_xyz = None
         with self.assertRaises(AttributeError):
             self._ctrl.execute("left_arm", "nonexistent_method_xyz")
 
