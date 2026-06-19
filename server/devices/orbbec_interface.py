@@ -22,9 +22,6 @@ import numpy as np
 from pyorbbecsdk import (
     Context,
     Pipeline,
-    Config,
-    OBSensorType,
-    OBAlignMode,
     OBFormat,
     ColorFrame,
     DepthFrame,
@@ -85,15 +82,7 @@ class OrbbecInterface:
         device = device_list.get_device_by_index(self.device_index)
         self._pipeline = Pipeline(device)
 
-        config = Config()
-        color_profiles = self._pipeline.get_stream_profile_list(OBSensorType.COLOR)
-        depth_profiles = self._pipeline.get_stream_profile_list(OBSensorType.DEPTH)
-        config.enable_stream(color_profiles.get_default_video_stream_profile())
-        config.enable_stream(depth_profiles.get_default_video_stream_profile())
-        config.set_align_mode(OBAlignMode.SW_MODE)
-
-        self._pipeline.start(config)
-        self._pipeline.enable_frame_sync()
+        self._pipeline.start()
 
         cam_param = self._pipeline.get_camera_param()
         intr = cam_param.rgb_intrinsic
@@ -170,8 +159,7 @@ class OrbbecInterface:
         """
         Convert pixel (u, v) to a 3D point in the camera frame (metres).
 
-        Depth is software-aligned to the color stream, so RGB intrinsics
-        (cached at start) apply directly. Returns None when depth is
+        Uses RGB intrinsics cached at start. Returns None when depth is
         unavailable, zero, or the pixel is out of bounds.
         """
         if self._fx is None or self._depth_scale is None:
