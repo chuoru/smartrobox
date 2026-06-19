@@ -86,6 +86,7 @@ class OrbbecInterface:
 
         self.running = False
         self._fail_count = 0
+        self._frame_callback: object = None
 
     # ===========================================================
     # CONNECTION
@@ -119,8 +120,11 @@ class OrbbecInterface:
 
         self._fail_count = 0
         self.running = True
+        # Store the bound method so it is not garbage-collected before the
+        # SDK's internal thread invokes it (pyorbbecsdk2 may not Py_INCREF it).
+        self._frame_callback = self._on_frame
         try:
-            self._pipeline.start(config, self._on_frame)
+            self._pipeline.start(config, self._frame_callback)
         except Exception:
             self.running = False
             raise
@@ -141,6 +145,7 @@ class OrbbecInterface:
             except Exception:
                 pass
             self._pipeline = None
+        self._frame_callback = None
 
         self._color_q.clear()
         self._depth_q.clear()
