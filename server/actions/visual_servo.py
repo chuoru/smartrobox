@@ -65,6 +65,7 @@ class VisualServoAction(BaseAction):
         model_name: str = "yolo11n-pose.pt",
         warmup_timeout: float = 3.0,
         keypoint_conf_min: float = 0.5,
+        servo_space: str = "joint",
     ) -> None:
         """! Load the YOLO model and store servo parameters.
 
@@ -77,7 +78,9 @@ class VisualServoAction(BaseAction):
         @param stable_ticks<int>: Consecutive ticks below threshold required to
             declare convergence.
         @param gain_matrix<list[list[float]]|None>: 6×2 matrix where
-            gain_matrix[i] = [gx, gy] maps (mean_ex, mean_ey) to Δji.
+            gain_matrix[i] = [gx, gy] maps (mean_ex, mean_ey) to Δi.
+            In "joint" space Δi is a joint increment (deg); in "cart" space Δi
+            is a TCP increment (mm for i<3, deg for i>=3).
             Defaults to all-zero (monitoring only, no motion).
         @param cmd_period<float>: Servo command interval in seconds.  Default 0.016.
         @param timeout<float>: Maximum run time in seconds.  Default 30.0.
@@ -85,6 +88,8 @@ class VisualServoAction(BaseAction):
         @param warmup_timeout<float>: Seconds to poll for the first camera frame.
         @param keypoint_conf_min<float>: Minimum YOLO keypoint confidence to
             include a keypoint in the error computation.
+        @param servo_space<str>: "joint" (default) or "cart".  Selects whether
+            corrections are applied via servo_j or servo_c.
         """
         super().__init__(controller)
         self._robot_device = robot_device
@@ -97,6 +102,7 @@ class VisualServoAction(BaseAction):
         self._timeout = timeout
         self._warmup_timeout = warmup_timeout
         self._keypoint_conf_min = keypoint_conf_min
+        self._servo_space = servo_space
         self._model = YOLO(model_name)
         self._model_name = model_name
 
@@ -113,6 +119,7 @@ class VisualServoAction(BaseAction):
             "cmd_period": self._cmd_period,
             "timeout": self._timeout,
             "model_name": self._model_name,
+            "servo_space": self._servo_space,
         }
 
     # =========================================================================
@@ -134,9 +141,14 @@ class VisualServoAction(BaseAction):
 
         self._call(self._robot_device, "servo_start")
 
-        ret, joint_pos = self._call(self._robot_device, "get_joint_pos")
-        if ret != 0:
-            joint_pos = [0.0] * 6
+        if self._servo_space == "cart":
+            ret, pose = self._call(self._robot_device, "tpos")
+            if ret != 0:
+                pose = [0.0] * 6
+        else:
+            ret, joint_pos = self._call(self._robot_device, "get_joint_pos")
+            if ret != 0:
+                joint_pos = [0.0] * 6
 
         stable_counter = 0
         error = math.inf
@@ -170,8 +182,12 @@ class VisualServoAction(BaseAction):
                         + self._gain_matrix[i][1] * mean_ey
                         for i in range(6)
                     ]
-                    joint_pos = [jp + dj for jp, dj in zip(joint_pos, delta)]
-                    self._call(self._robot_device, "servo_j", joint_pos, self._cmd_period)
+                    if self._servo_space == "cart":
+                        pose = [p + d for p, d in zip(pose, delta)]
+                        self._call(self._robot_device, "servo_c", pose, self._cmd_period)
+                    else:
+                        joint_pos = [jp + dj for jp, dj in zip(joint_pos, delta)]
+                        self._call(self._robot_device, "servo_j", joint_pos, self._cmd_period)
 
             if not self._checkpoint():
                 break

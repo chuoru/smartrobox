@@ -2,8 +2,8 @@
 ##
 # @file example_fairino_servo_keyboard.py
 #
-# @brief Integration example: jog a Fairino robot joint-by-joint using keyboard
-#        keys via high-rate ServoJ control (~60 Hz).
+# @brief Integration example: jog a Fairino robot joint-by-joint or in Cartesian
+#        space using keyboard keys via high-rate ServoJ / ServoC control (~60 Hz).
 #
 # @section author Author(s)
 # - Created by chuoru on 2026/06/20.
@@ -30,13 +30,19 @@ from app.controller import Controller
 
 _ROBOT_DEVICE = "robot"
 _CMD_PERIOD = 0.016
-_JOINT_DELTA = 0.5
+_JOINT_DELTA = 0.5       # degrees per keypress
+_CART_DELTA_TRANS = 1.0  # mm per keypress
+_CART_DELTA_ROT = 0.5    # degrees per keypress
 _HUD_WIDTH = 640
 _HUD_HEIGHT = 400
 _WINDOW_TITLE = "Fairino Servo Keyboard"
 _ESC = 27
+_TAB = 9
+_MODE_JOINT = "JOINT"
+_MODE_CART = "CART"
 
-# Number row increases joint angle; QWERTY row decreases (number key sits above its letter).
+# Number row increases DOF; QWERTY row decreases. Indices 0-5 map to J1-J6 (joint)
+# or X/Y/Z/Rx/Ry/Rz (cartesian) depending on the active mode.
 _KEY_BINDINGS: dict[int, tuple[int, int]] = {
     ord("1"): (0, +1),  ord("q"): (0, -1),
     ord("2"): (1, +1),  ord("w"): (1, -1),
@@ -46,43 +52,65 @@ _KEY_BINDINGS: dict[int, tuple[int, int]] = {
     ord("6"): (5, +1),  ord("y"): (5, -1),
 }
 
+_JOINT_LABELS = ["J1", "J2", "J3", "J4", "J5", "J6"]
+_CART_LABELS  = ["X",  "Y",  "Z",  "Rx", "Ry", "Rz"]
+_CART_UNITS   = ["mm", "mm", "mm", "deg", "deg", "deg"]
 
-def _build_joint_hints() -> dict[int, tuple[str, str]]:
-    """! Build a per-joint mapping to the increase/decrease key characters.
 
-    @return<dict[int, tuple[str, str]]>: {joint_idx: (inc_char, dec_char)}.
+def _build_key_hints() -> dict[int, tuple[str, str]]:
+    """! Build per-DOF mapping to increase/decrease key characters.
+
+    @return<dict[int, tuple[str, str]]>: {dof_idx: (inc_char, dec_char)}.
     """
     hints: dict[int, list] = {}
-    for key_code, (joint_idx, direction) in _KEY_BINDINGS.items():
-        hints.setdefault(joint_idx, ["", ""])
+    for key_code, (dof_idx, direction) in _KEY_BINDINGS.items():
+        hints.setdefault(dof_idx, ["", ""])
         if direction > 0:
-            hints[joint_idx][0] = chr(key_code)
+            hints[dof_idx][0] = chr(key_code)
         else:
-            hints[joint_idx][1] = chr(key_code)
+            hints[dof_idx][1] = chr(key_code)
     return {idx: (v[0], v[1]) for idx, v in hints.items()}
 
 
-_JOINT_HINTS = _build_joint_hints()
+_KEY_HINTS = _build_key_hints()
 
 
-def _draw_hud(canvas: np.ndarray, joints: list[float]) -> None:
-    """! Render joint angles and key-binding help onto the HUD canvas in-place.
+def _draw_hud(
+    canvas: np.ndarray,
+    mode: str,
+    joints: list[float],
+    cart: list[float],
+) -> None:
+    """! Render current state and key-binding help onto the HUD canvas in-place.
 
     @param canvas<np.ndarray>: BGR image array of shape (_HUD_HEIGHT, _HUD_WIDTH, 3).
+    @param mode<str>: Active control mode (_MODE_JOINT or _MODE_CART).
     @param joints<list[float]>: Current joint angles [j1..j6] in degrees.
+    @param cart<list[float]>: Current TCP pose [x, y, z, rx, ry, rz] in mm/deg.
     """
     canvas[:] = 0
+
+    mode_color = (0, 255, 128) if mode == _MODE_JOINT else (0, 200, 255)
     cv2.putText(
-        canvas, "Fairino Servo Keyboard Jog",
-        (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2,
+        canvas, f"Fairino Servo Keyboard  [{mode} MODE]",
+        (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_color, 2,
     )
     cv2.line(canvas, (10, 50), (_HUD_WIDTH - 10, 50), (80, 80, 80), 1)
 
-    for i, angle in enumerate(joints):
-        inc_key, dec_key = _JOINT_HINTS[i]
+    if mode == _MODE_JOINT:
+        values = joints
+        labels = _JOINT_LABELS
+        units  = ["deg"] * 6
+    else:
+        values = cart
+        labels = _CART_LABELS
+        units  = _CART_UNITS
+
+    for i, (label, value, unit) in enumerate(zip(labels, values, units)):
+        inc_key, dec_key = _KEY_HINTS[i]
         y = 90 + i * 45
         cv2.putText(
-            canvas, f"J{i + 1}: {angle:+8.3f} deg",
+            canvas, f"{label}: {value:+9.3f} {unit}",
             (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 1,
         )
         cv2.putText(
@@ -90,15 +118,15 @@ def _draw_hud(canvas: np.ndarray, joints: list[float]) -> None:
             (330, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 215, 255), 1,
         )
 
-    cv2.line(canvas, (10, _HUD_HEIGHT - 45), (_HUD_WIDTH - 10, _HUD_HEIGHT - 45), (80, 80, 80), 1)
+    cv2.line(canvas, (10, _HUD_HEIGHT - 60), (_HUD_WIDTH - 10, _HUD_HEIGHT - 60), (80, 80, 80), 1)
     cv2.putText(
-        canvas, "ESC = quit",
-        (10, _HUD_HEIGHT - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 1,
+        canvas, "Tab = toggle mode   ESC = quit",
+        (10, _HUD_HEIGHT - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 1,
     )
 
 
 def main() -> None:
-    """! Open robot in debug mode, enter servo mode, and jog joints via keyboard."""
+    """! Open robot in debug mode, enter servo mode, and jog via keyboard."""
     device_cfg = {
         "devices": {
             _ROBOT_DEVICE: {
@@ -119,21 +147,28 @@ def main() -> None:
             print(f"[example] Failed to open robot '{_ROBOT_DEVICE}'")
             return
 
-        print("[example] Robot opened. Press keys to jog joints. ESC to quit.")
-        print("[example] Keys: 1-6 increase J1-J6; Q/W/E/R/T/Y decrease J1-J6.")
+        print("[example] Robot opened.")
+        print("[example] Keys: 1-6 increase DOF; Q/W/E/R/T/Y decrease DOF.")
+        print("[example] Tab toggles Joint / Cartesian mode. ESC to quit.")
 
         try:
             err, joints = ctrl.execute(_ROBOT_DEVICE, "get_joint_pos")
             if err != 0:
                 print(f"[example] get_joint_pos failed (err={err})")
                 return
-
             joints = list(joints)
+
+            err, cart = ctrl.execute(_ROBOT_DEVICE, "tpos")
+            if err != 0:
+                print(f"[example] tpos failed (err={err})")
+                return
+            cart = list(cart)
 
             if not ctrl.execute(_ROBOT_DEVICE, "servo_start"):
                 print("[example] servo_start failed")
                 return
 
+            mode = _MODE_JOINT
             canvas = np.zeros((_HUD_HEIGHT, _HUD_WIDTH, 3), dtype=np.uint8)
             cv2.namedWindow(_WINDOW_TITLE, cv2.WINDOW_AUTOSIZE)
 
@@ -146,15 +181,28 @@ def main() -> None:
                         print("[example] ESC pressed — quitting.")
                         break
 
+                    if key == _TAB:
+                        mode = _MODE_CART if mode == _MODE_JOINT else _MODE_JOINT
+                        print(f"[example] Switched to {mode} mode.")
+
                     if key in _KEY_BINDINGS:
-                        joint_idx, direction = _KEY_BINDINGS[key]
-                        joints[joint_idx] += direction * _JOINT_DELTA
+                        dof_idx, direction = _KEY_BINDINGS[key]
+                        if mode == _MODE_JOINT:
+                            joints[dof_idx] += direction * _JOINT_DELTA
+                        else:
+                            delta = _CART_DELTA_TRANS if dof_idx < 3 else _CART_DELTA_ROT
+                            cart[dof_idx] += direction * delta
 
-                    if not ctrl.execute(_ROBOT_DEVICE, "servo_j", joints, _CMD_PERIOD):
-                        print("[example] servo_j failed — stopping.")
-                        break
+                    if mode == _MODE_JOINT:
+                        if not ctrl.execute(_ROBOT_DEVICE, "servo_j", joints, _CMD_PERIOD):
+                            print("[example] servo_j failed — stopping.")
+                            break
+                    else:
+                        if not ctrl.execute(_ROBOT_DEVICE, "servo_c", cart, _CMD_PERIOD):
+                            print("[example] servo_c failed — stopping.")
+                            break
 
-                    _draw_hud(canvas, joints)
+                    _draw_hud(canvas, mode, joints, cart)
                     cv2.imshow(_WINDOW_TITLE, canvas)
 
                     elapsed = time.perf_counter() - t_start

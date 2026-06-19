@@ -32,6 +32,9 @@ _CAMERA_DEVICE = "camera"
 _MODEL_NAME = "yolo11n-pose.pt"
 _KP_CONF_THRESHOLD = 0.5
 _ACTION_TIMEOUT = 30.0
+# Set to "cart" to servo in Cartesian space (TCP X/Y/Z/Rx/Ry/Rz).
+# Gain matrix rows then map (ex, ey) → mm increment (i<3) or deg increment (i>=3).
+_SERVO_SPACE = "joint"
 
 # Placeholder target keypoints (17 COCO keypoints at image centre).
 # Replace with real target positions captured from the camera.
@@ -119,6 +122,7 @@ def main() -> None:
                 cmd_period=0.016,
                 timeout=_ACTION_TIMEOUT,
                 model_name=_MODEL_NAME,
+                servo_space=_SERVO_SPACE,
             )
             action.start()
 

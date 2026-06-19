@@ -313,6 +313,28 @@ class FairinoInterface:
             return False
         return True
 
+    def servo_c(self, cart_pos: list[float], cmd_period: float = 0.016) -> bool:
+        """! Send one cartesian-space servo command (absolute base frame).
+        @param cart_pos<list[float]>: Target TCP pose [x, y, z, rx, ry, rz] in mm/deg.
+        @param cmd_period<float>: Command cycle time in seconds. Default 0.016.
+        @return<bool>: True if successful, False otherwise.
+        """
+        if self._debug:
+            print(f"[FairinoInterface] servo_c {cart_pos} (debug)")
+            time.sleep(cmd_period)
+            return True
+        try:
+            ret = self.robot.ServoCart(
+                0, list(map(float, cart_pos)), [1.0] * 6,
+                0.0, 0.0, float(cmd_period), 0.0, 0.0,
+            )
+            if ret != 0:
+                raise Exception(f"ServoCart error: {ret}")
+        except Exception as exception:
+            print(f"[servo_c] Failed: {exception}")
+            return False
+        return True
+
     def servo_end(self) -> bool:
         """! Exit servo mode; call after the servo loop finishes.
         @return<bool>: True if successful, False otherwise.
