@@ -207,21 +207,23 @@ class OrbbecInterface:
             color_frame: ColorFrame | None = frameset.get_color_frame()
             depth_frame: DepthFrame | None = frameset.get_depth_frame()
 
-            if color_frame is None or depth_frame is None:
+            if color_frame is None and depth_frame is None:
                 time.sleep(0.01)
                 continue
 
             try:
-                color_bgr = self._decode_color(color_frame)
-                depth_arr = self._decode_depth(depth_frame)
+                color_bgr = self._decode_color(color_frame) if color_frame is not None else None
+                depth_arr = self._decode_depth(depth_frame) if depth_frame is not None else None
 
-                if self._depth_scale is None:
+                if depth_frame is not None and self._depth_scale is None:
                     self._depth_scale = depth_frame.get_depth_scale()
 
                 self._fail_count = 0
                 with self._lock:
-                    self._color_frame = color_bgr
-                    self._depth_frame = depth_arr
+                    if color_bgr is not None:
+                        self._color_frame = color_bgr
+                    if depth_arr is not None:
+                        self._depth_frame = depth_arr
 
             except Exception:
                 self._fail_count += 1
