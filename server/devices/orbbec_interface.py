@@ -86,8 +86,8 @@ class OrbbecInterface:
         self._pipeline = Pipeline(device)
 
         config = Config()
-        color_profiles = self._pipeline.get_stream_profile_list(OBSensorType.COLOR)
-        depth_profiles = self._pipeline.get_stream_profile_list(OBSensorType.DEPTH)
+        color_profiles = self._pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
+        depth_profiles = self._pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
         config.enable_stream(color_profiles.get_default_video_stream_profile())
         config.enable_stream(depth_profiles.get_default_video_stream_profile())
         config.set_align_mode(OBAlignMode.SW_MODE)

@@ -16,7 +16,7 @@ devices:
     params:
       hand_type: "left"
       hand_joint: "O6"
-      modbus: "/dev/ttyUSB0"
+      modbus: "/dev/ttyUSB1"
       debug: False
 
   right_hand:
@@ -24,7 +24,7 @@ devices:
     params:
       hand_type: "right"
       hand_joint: "O6"
-      modbus: "/dev/ttyUSB1"
+      modbus: "/dev/ttyUSB0"
       debug: False
 
   left_camera:

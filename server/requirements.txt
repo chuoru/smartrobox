@@ -3,7 +3,7 @@ uvicorn
 python-multipart
 jinja2
 websockets
-pyorbbecsdk2
+pyorbbecsdk
 numpy
 minimalmodbus
 pyserial
