@@ -96,19 +96,24 @@ class OrbbecInterface:
             return
 
         ctx = Context()
-        count = ctx.query_devices().get_count()
-        del ctx
+        device_list = ctx.query_devices()
+        count = device_list.get_count()
 
         if count == 0:
+            del ctx
             raise RuntimeError("No Orbbec devices found")
 
         if self.device_index >= count:
+            del ctx
             raise RuntimeError(
                 f"Orbbec device index {self.device_index} out of range "
                 f"(found {count} device(s))"
             )
 
-        self._pipeline = Pipeline()
+        device = device_list.get_device_by_index(self.device_index)
+        del ctx
+
+        self._pipeline = Pipeline(device)
         config = Config()
 
         for sensor_type in [OBSensorType.COLOR_SENSOR, OBSensorType.DEPTH_SENSOR]:
