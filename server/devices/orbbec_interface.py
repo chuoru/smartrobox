@@ -90,12 +90,12 @@ class OrbbecInterface:
         depth_profiles = self._pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
         config.enable_stream(color_profiles.get_default_video_stream_profile())
         config.enable_stream(depth_profiles.get_default_video_stream_profile())
-        config.set_align_mode(OBAlignMode.SW_MODE)
+        config.set_align_mode(OBAlignMode.DISABLE)
 
         self._pipeline.start(config)
 
         cam_param = self._pipeline.get_camera_param()
-        intr = cam_param.rgb_intrinsic
+        intr = cam_param.depth_intrinsic
         self._fx = intr.fx
         self._fy = intr.fy
         self._cx = intr.cx
@@ -167,10 +167,9 @@ class OrbbecInterface:
         self, u: int, v: int
     ) -> tuple[float, float, float] | None:
         """
-        Convert pixel (u, v) to a 3D point in the camera frame (metres).
+        Convert pixel (u, v) to a 3D point in the depth camera frame (metres).
 
-        Depth is software-aligned to the color stream, so RGB intrinsics
-        (cached at start) apply directly. Returns None when depth is
+        Uses depth intrinsics cached at start. Returns None when depth is
         unavailable, zero, or the pixel is out of bounds.
         """
         if self._fx is None or self._depth_scale is None:
