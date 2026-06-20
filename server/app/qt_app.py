@@ -260,8 +260,8 @@ class _CameraPanel(QWidget):
         self._logger = Logger("CameraPanel", Logger.MAGENTA)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self._widgets: dict[str, _CameraWidget] = {}
         for name in camera_names:
@@ -320,8 +320,8 @@ class MuJoCoWindow(QMainWindow):
             splitter = QSplitter(Qt.Orientation.Horizontal, self)
             splitter.addWidget(self._viewport)
             splitter.addWidget(self._camera_panel)
-            splitter.setStretchFactor(0, 3)
-            splitter.setStretchFactor(1, 1)
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 2)
             self.setCentralWidget(splitter)
         else:
             self._camera_panel = None
