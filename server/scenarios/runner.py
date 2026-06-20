@@ -16,6 +16,7 @@ import threading
 from actions.base import ActionState, BaseAction
 from actions.estimate_pose import EstimatePoseAction
 from actions.grasp import GraspAction
+from actions.massage import MassageAction
 from actions.robot_program import RobotProgramAction
 from actions.visual_servo import VisualServoAction
 from app.controller import Controller
@@ -54,6 +55,19 @@ def _make_estimate_pose(
     )
 
 
+def _make_massage(
+    controller: Controller, data_folder: str, params: dict
+) -> MassageAction:
+    return MassageAction(
+        controller,
+        device_name=params["device"],
+        cycles=int(params.get("cycles", 5)),
+        half_close_duration=float(params.get("half_close_duration", 0.4)),
+        open_duration=float(params.get("open_duration", 0.4)),
+        torque_limit=int(params.get("torque_limit", 180)),
+    )
+
+
 def _make_visual_servo(
     controller: Controller, data_folder: str, params: dict
 ) -> VisualServoAction:
@@ -73,6 +87,7 @@ def _make_visual_servo(
 
 _ACTION_REGISTRY: dict = {
     "grasp": _make_grasp,
+    "massage": _make_massage,
     "robot_program": _make_robot_program,
     "estimate_pose": _make_estimate_pose,
     "visual_servo": _make_visual_servo,
