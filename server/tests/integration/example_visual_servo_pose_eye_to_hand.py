@@ -48,7 +48,6 @@ _KP_CONF_THRESHOLD = 0.4
 _ERROR_THRESHOLD = 30.0
 _STABLE_TICKS = 10
 _ACTION_TIMEOUT = 30.0
-_ESTIMATE_TIMEOUT = 3.0
 _SERVO_GAIN_3D = 0.5
 
 _DEVICE_FILE = os.path.abspath(
@@ -229,26 +228,36 @@ def _phase_capture(
     print("[example]   SPACE: capture person as target | Q: quit")
 
     action = EstimatePoseAction(ctrl, _HEAD_CAMERA, _MODEL_NAME)
+    poses: list[dict] = []
+    action.reset()
+    action.start()
+
     while True:
-        action.reset()
-        action.start()
-        action.wait(timeout=_ESTIMATE_TIMEOUT + 1.0)
+        if action.wait(timeout=0.05):
+            poses = action.result() or []
+            action.reset()
+            action.start()
+        elif action.state() in (ActionState.FAILED, ActionState.CANCELLED):
+            action.reset()
+            action.start()
 
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is None:
             continue
 
-        poses = action.result() or []
         _draw_poses(frame, poses)
-
         hint = "SPACE: capture" if poses else "no person detected"
         _draw_status(frame, hint)
         cv2.imshow("Capture target — head camera", frame)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
+            action.cancel()
+            action.wait(timeout=2.0)
             return None
         if key == ord(" ") and poses:
+            action.cancel()
+            action.wait(timeout=2.0)
             person = poses[0]
             kps_2d = person["keypoints"]
             kp_confs = person["keypoint_conf"]
