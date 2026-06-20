@@ -6,9 +6,11 @@
 #
 #        OUTER LOOP (infinite — press Ctrl+C to stop):
 #          INNER LOOP (10 times):
-#            Step 1: massage both hands + move both arms to home          [4 in parallel]
-#            Step 2: massage both hands + move both arms to massage       [4 in parallel]
-#            Step 3: massage both hands + move both arms to open position [4 in parallel]
+#            Start massage on both hands (runs in parallel throughout all arm moves)
+#            Move both arms to home          [both arms simultaneous]
+#            Move both arms to massage       [both arms simultaneous]
+#            Move both arms to open position [both arms simultaneous]
+#            Cancel massage and wait for it to stop
 #          END INNER LOOP
 #          Step 4: open both hands + move both arms to handshake         [4 in parallel]
 #          Step 5: wait 5 seconds
@@ -52,13 +54,14 @@ _OPEN_RIGHT_KEY      = "open_right"
 _HANDSHAKE_LEFT_KEY  = "handshake_left"
 _HANDSHAKE_RIGHT_KEY = "handshake_right"
 
-_MOVE_VEL    = 20.0
+_MOVE_VEL    = 50.0
 _TORQUE_LIMIT = 180
 _OPEN_POSE   = [255] * 6
 _CLOSED_POSE = [0] * 6
 
-# 3 cycles × (0.4 s half-close + 0.4 s open) ≈ 2.4 s, matching typical arm move time
-_CYCLES              = 3
+# Large cycle count so massage runs continuously for the full arm sequence;
+# it is cancelled as soon as all three arm moves complete.
+_CYCLES              = 100
 _HALF_CLOSE_DURATION = 0.4
 _OPEN_DURATION       = 0.4
 _MASSAGE_TIMEOUT     = 30.0
@@ -96,29 +99,52 @@ def _load_joints(key: str) -> list[float] | None:
     return [float(block[k]) for k in ("j1", "j2", "j3", "j4", "j5", "j6")]
 
 
-def _run_parallel_step(
-    ctrl: Controller,
-    left_arm_key: str,
-    right_arm_key: str,
-    label: str,
-) -> bool:
-    """! Massage both hands and move both arms to the given positions, all in parallel.
-
-    Fires two MassageActions (each uses its own daemon thread via BaseAction.start())
-    and two arm-move threads simultaneously, then waits for all four to finish.
+def _move_both_arms(ctrl: Controller, left_key: str, right_key: str) -> bool:
+    """! Move both arms to named teaching points simultaneously.
 
     @param ctrl<Controller>: Active controller.
-    @param left_arm_key<str>: Teaching point key for the left arm destination.
-    @param right_arm_key<str>: Teaching point key for the right arm destination.
-    @param label<str>: Human-readable name for logging (e.g. "home").
-    @return<bool>: True if all four tasks completed successfully, False otherwise.
+    @param left_key<str>: Teaching point key for the left arm.
+    @param right_key<str>: Teaching point key for the right arm.
+    @return<bool>: True if both arms reached their targets, False on any failure.
     """
-    joints_left  = _load_joints(left_arm_key)
-    joints_right = _load_joints(right_arm_key)
+    joints_left  = _load_joints(left_key)
+    joints_right = _load_joints(right_key)
     if joints_left is None or joints_right is None:
         return False
 
-    print(f"[scenario] Step '{label}' — massage (both hands) + move (both arms) in parallel ...")
+    results: dict[str, bool] = {}
+
+    def _move(device: str, joints: list[float], key: str) -> None:
+        print(f"[scenario]   Moving '{device}' to '{key}' ...")
+        ok = bool(ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL))
+        results[device] = ok
+        if ok:
+            print(f"[scenario]   '{device}' reached '{key}'.")
+        else:
+            print(f"[scenario]   movej failed for '{device}'.")
+
+    left_t  = threading.Thread(target=_move, args=(_LEFT_ARM,  joints_left,  left_key))
+    right_t = threading.Thread(target=_move, args=(_RIGHT_ARM, joints_right, right_key))
+    left_t.start()
+    right_t.start()
+    left_t.join()
+    right_t.join()
+
+    return results.get(_LEFT_ARM, False) and results.get(_RIGHT_ARM, False)
+
+
+def _inner_iteration(ctrl: Controller, label: str) -> bool:
+    """! One inner iteration: massage both hands while arms cycle through home→massage→open.
+
+    Both MassageActions start immediately and run in parallel with the entire arm
+    sequence.  Once all three arm moves complete (or any move fails), the massage
+    actions are cancelled and we wait for them to stop cleanly.
+
+    @param ctrl<Controller>: Active controller.
+    @param label<str>: Human-readable iteration label for logging.
+    @return<bool>: True if all arm moves succeeded and massage stopped cleanly.
+    """
+    print(f"[scenario] {label} — starting massage on both hands ...")
 
     left_massage = MassageAction(
         ctrl,
@@ -137,45 +163,31 @@ def _run_parallel_step(
         torque_limit=_TORQUE_LIMIT,
     )
 
-    arm_results: dict[str, bool] = {}
-
-    def _move(device: str, joints: list[float], key: str) -> None:
-        print(f"[scenario]   Moving '{device}' to '{key}' ...")
-        ok = bool(ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL))
-        arm_results[device] = ok
-        if ok:
-            print(f"[scenario]   '{device}' reached '{key}'.")
-        else:
-            print(f"[scenario]   movej failed for '{device}'.")
-
-    left_arm_t  = threading.Thread(target=_move, args=(_LEFT_ARM,  joints_left,  left_arm_key))
-    right_arm_t = threading.Thread(target=_move, args=(_RIGHT_ARM, joints_right, right_arm_key))
-
     left_massage.start()
     right_massage.start()
-    left_arm_t.start()
-    right_arm_t.start()
 
+    arm_ok = (
+        _move_both_arms(ctrl, _HOME_LEFT_KEY, _HOME_RIGHT_KEY)
+        and _move_both_arms(ctrl, _MASSAGE_LEFT_KEY, _MASSAGE_RIGHT_KEY)
+        and _move_both_arms(ctrl, _OPEN_LEFT_KEY, _OPEN_RIGHT_KEY)
+    )
+
+    # Cancel massage once the arm sequence finishes (success or failure).
+    left_massage.cancel()
+    right_massage.cancel()
     left_massage.wait(timeout=_MASSAGE_TIMEOUT)
     right_massage.wait(timeout=_MASSAGE_TIMEOUT)
-    left_arm_t.join()
-    right_arm_t.join()
 
-    all_ok = True
+    all_ok = arm_ok
     for hand_label, action in (("left_hand", left_massage), ("right_hand", right_massage)):
-        if action.state() == ActionState.DONE:
-            print(f"[scenario]   {hand_label} massage complete.")
+        if action.state() in (ActionState.DONE, ActionState.CANCELLED):
+            print(f"[scenario]   {hand_label} massage stopped.")
         elif action.state() == ActionState.FAILED:
             print(f"[scenario]   {hand_label} massage FAILED: {action.error()}")
             all_ok = False
         else:
             print(f"[scenario]   {hand_label} massage ended: state={action.state().value}")
             all_ok = False
-
-    if not arm_results.get(_LEFT_ARM, False):
-        all_ok = False
-    if not arm_results.get(_RIGHT_ARM, False):
-        all_ok = False
 
     return all_ok
 
@@ -261,18 +273,9 @@ def main() -> None:
             print(f"\n[scenario] ===== Outer loop iteration {outer_count} =====")
 
             for inner_idx in range(1, _INNER_LOOP_COUNT + 1):
-                print(f"[scenario] --- Inner {inner_idx}/{_INNER_LOOP_COUNT} ---")
-
-                if not _run_parallel_step(ctrl, _HOME_LEFT_KEY, _HOME_RIGHT_KEY, "home"):
-                    print("[scenario] Step 1 (home) failed — aborting.")
-                    return
-
-                if not _run_parallel_step(ctrl, _MASSAGE_LEFT_KEY, _MASSAGE_RIGHT_KEY, "massage"):
-                    print("[scenario] Step 2 (massage) failed — aborting.")
-                    return
-
-                if not _run_parallel_step(ctrl, _OPEN_LEFT_KEY, _OPEN_RIGHT_KEY, "open"):
-                    print("[scenario] Step 3 (open) failed — aborting.")
+                label = f"Inner {inner_idx}/{_INNER_LOOP_COUNT}"
+                if not _inner_iteration(ctrl, label):
+                    print(f"[scenario] {label} failed — aborting.")
                     return
 
             if not _step_handshake(ctrl):
