@@ -32,7 +32,6 @@ import mediapipe as mp
 
 # Internal library
 from actions.base import ActionState
-from actions.estimate_hand import EstimateHandAction
 from actions.visual_servo import VisualServoAction
 from app.config import Config
 from app.controller import Controller
@@ -191,13 +190,48 @@ def _draw_error_overlay(
 # Phase helpers
 # ---------------------------------------------------------------------------
 
+def _detect_hands_from_frame(
+    detector, frame
+) -> list[dict]:
+    """! Run MediaPipe on one BGR frame and return hand dicts ready for drawing.
+
+    @param detector: mp.solutions.hands.Hands instance (reused across calls).
+    @param frame: BGR numpy array from the camera.
+    @return<list[dict]>: One dict per detected hand, sorted by confidence desc.
+    """
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = detector.process(rgb)
+    if not results.multi_hand_landmarks:
+        return []
+    h, w = frame.shape[:2]
+    hands = []
+    handedness_list = results.multi_handedness or []
+    for i, hl in enumerate(results.multi_hand_landmarks):
+        kps = [[lm.x * w, lm.y * h] for lm in hl.landmark]
+        vis = [lm.visibility for lm in hl.landmark]
+        xs = [p[0] for p in kps]
+        ys = [p[1] for p in kps]
+        conf = (
+            handedness_list[i].classification[0].score
+            if i < len(handedness_list)
+            else 1.0
+        )
+        hands.append({
+            "keypoints": kps,
+            "keypoint_conf": vis,
+            "bbox": [min(xs), min(ys), max(xs), max(ys)],
+            "conf": conf,
+        })
+    hands.sort(key=lambda h: h["conf"], reverse=True)
+    return hands
+
+
 def _phase_capture(ctrl: Controller) -> list[list[float]] | None:
     """! Stream hand detection until the user captures a target.
 
-    Runs EstimateHandAction in a loop.  Overlays detected landmarks on each
-    frame.  Returns the 21-keypoint pixel positions of the first detected hand
-    when the user presses SPACE, or None if the user presses Q or closes the
-    window.
+    Uses a single MediaPipe detector for the whole phase (avoids re-initialising
+    the GPU context on every frame).  The same frame that is processed is the
+    one displayed, so there is no stale-buffer mismatch.
 
     @param ctrl<Controller>: Active controller.
     @return<list[list[float]]|None>: Captured target keypoints or None.
@@ -205,38 +239,43 @@ def _phase_capture(ctrl: Controller) -> list[list[float]] | None:
     print("[example] Phase 1 — Hand capture")
     print("[example]   SPACE: capture hand as target | Q: quit")
 
-    while True:
-        action = EstimateHandAction(
-            ctrl, _LEFT_CAMERA, warmup_timeout=_ESTIMATE_TIMEOUT
-        )
-        action.start()
-        action.wait(timeout=_ESTIMATE_TIMEOUT + 1.0)
+    detector = mp.solutions.hands.Hands(
+        static_image_mode=False,
+        max_num_hands=2,
+        model_complexity=0,
+        min_detection_confidence=0.5,
+    )
+    try:
+        while True:
+            frame = ctrl.execute(_LEFT_CAMERA, "get_color_frame")
+            if frame is None:
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    return None
+                continue
 
-        frame = ctrl.execute(_LEFT_CAMERA, "get_color_frame")
-        if frame is None:
-            continue
+            hands = _detect_hands_from_frame(detector, frame)
+            for hand in hands:
+                _draw_hand(frame, hand, _KP_CONF_THRESHOLD, (0, 200, 255))
 
-        hands = action.result() or []
-        for hand in hands:
-            _draw_hand(frame, hand, _KP_CONF_THRESHOLD, (0, 200, 255))
+            if hands:
+                hint = (
+                    f"SPACE: capture  |  "
+                    f"hands={len(hands)}  conf={hands[0]['conf']:.2f}"
+                )
+            else:
+                hint = "no hand detected"
+            _draw_status(frame, hint)
+            cv2.imshow("Capture target — left camera", frame)
 
-        if hands:
-            hint = (
-                f"SPACE: capture  |  "
-                f"hands={len(hands)}  conf={hands[0]['conf']:.2f}"
-            )
-        else:
-            hint = "no hand detected"
-        _draw_status(frame, hint)
-        cv2.imshow("Capture target — left camera", frame)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            return None
-        if key == ord(" ") and hands:
-            target = hands[0]["keypoints"]
-            print(f"[example] Target captured: wrist={target[0]}, index_tip={target[8]}")
-            return target
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                return None
+            if key == ord(" ") and hands:
+                target = hands[0]["keypoints"]
+                print(f"[example] Target captured: wrist={target[0]}, index_tip={target[8]}")
+                return target
+    finally:
+        detector.close()
 
 
 def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
@@ -250,7 +289,7 @@ def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
     print("[example]   orange = current hand  |  green = target  |  red arrow = error")
 
     detector = mp.solutions.hands.Hands(
-        static_image_mode=True,
+        static_image_mode=False,
         max_num_hands=1,
         model_complexity=0,
         min_detection_confidence=0.5,
