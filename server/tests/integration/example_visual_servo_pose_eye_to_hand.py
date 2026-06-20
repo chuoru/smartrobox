@@ -236,7 +236,10 @@ def _phase_capture(
 
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is None:
+            print("[example] get_color_frame returned None")
             continue
+        print(f"[example] frame: shape={frame.shape} dtype={frame.dtype} "
+              f"max={int(frame.max())} mean={frame.mean():.1f}")
 
         poses = action.result() or []
         _draw_poses(frame, poses)
