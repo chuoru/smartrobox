@@ -26,9 +26,12 @@ from app.controller import Controller
 
 _LEFT_ARM = "left_arm"
 _RIGHT_ARM = "right_arm"
+_LEFT_HAND = "left_hand"
+_RIGHT_HAND = "right_hand"
 _LEFT_HOME_KEY = "home_left"
 _RIGHT_HOME_KEY = "home_right"
 _MOVE_VEL = 20.0
+_OPEN_POSE = [0] * 6
 _DEVICE_FILE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
 )
@@ -65,7 +68,7 @@ def main() -> None:
     ctrl = Controller(Config(_DEVICE_FILE))
 
     opened: list[str] = []
-    for device in (_LEFT_ARM, _RIGHT_ARM):
+    for device in (_LEFT_ARM, _RIGHT_ARM, _LEFT_HAND, _RIGHT_HAND):
         if not ctrl.open(device):
             print(f"[example] Failed to open '{device}'")
             for d in opened:
@@ -94,6 +97,14 @@ def main() -> None:
                 return
 
             print(f"[example] '{device}' reached home.")
+
+        for device in (_LEFT_HAND, _RIGHT_HAND):
+            print(f"[example] Opening all fingers on '{device}' ...")
+            ok = ctrl.execute(device, "move", _OPEN_POSE)
+            if not ok:
+                print(f"[example] move failed for '{device}'")
+                return
+            print(f"[example] '{device}' fingers opened.")
 
     finally:
         for device in opened:
