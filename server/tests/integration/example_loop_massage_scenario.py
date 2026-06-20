@@ -54,7 +54,7 @@ _OPEN_RIGHT_KEY      = "open_right"
 _HANDSHAKE_LEFT_KEY  = "handshake_left"
 _HANDSHAKE_RIGHT_KEY = "handshake_right"
 
-_MOVE_VEL    = 50.0
+_MOVE_VEL    = 100.0
 _TORQUE_LIMIT = 180
 _OPEN_POSE   = [255] * 6
 _CLOSED_POSE = [0] * 6
@@ -62,11 +62,11 @@ _CLOSED_POSE = [0] * 6
 # Large cycle count so massage runs continuously for the full arm sequence;
 # it is cancelled as soon as all three arm moves complete.
 _CYCLES              = 100
-_HALF_CLOSE_DURATION = 0.4
-_OPEN_DURATION       = 0.4
+_HALF_CLOSE_DURATION = 0.5
+_OPEN_DURATION       = 0.5
 _MASSAGE_TIMEOUT     = 30.0
 
-_INNER_LOOP_COUNT = 10
+_INNER_LOOP_COUNT = 3
 _HANDSHAKE_WAIT   = 5.0
 
 _DEVICE_FILE = os.path.abspath(
