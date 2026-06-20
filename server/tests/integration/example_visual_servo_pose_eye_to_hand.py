@@ -207,10 +207,9 @@ def _phase_capture(
     print("[example] Phase 1 — Pose capture (head camera)")
     print("[example]   SPACE: capture person as target | Q: quit")
 
+    action = EstimatePoseAction(ctrl, _HEAD_CAMERA, _MODEL_NAME)
     while True:
-        action = EstimatePoseAction(
-            ctrl, _HEAD_CAMERA, _MODEL_NAME, warmup_timeout=_ESTIMATE_TIMEOUT
-        )
+        action.reset()
         action.start()
         action.wait(timeout=_ESTIMATE_TIMEOUT + 1.0)
 
