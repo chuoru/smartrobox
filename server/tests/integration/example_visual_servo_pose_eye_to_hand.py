@@ -195,6 +195,27 @@ def _poll_depth_warmup(ctrl: Controller, timeout: float = 3.0) -> bool:
     return False
 
 
+def _poll_color_warmup(ctrl: Controller, timeout: float = 5.0) -> bool:
+    """! Block until the head camera delivers a non-black color frame.
+
+    Orbbec sensors may output all-zero frames for several seconds after
+    startup even though depth is already streaming; this gate ensures the
+    color path is live before pose estimation begins.
+
+    @param ctrl<Controller>: Active controller.
+    @param timeout<float>: Maximum wait in seconds.
+    @return<bool>: True if a valid color frame arrived, False on timeout.
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
+        if frame is not None and np.any(frame):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def _phase_capture(
     ctrl: Controller, extrinsic: np.ndarray
 ) -> tuple[list[list[float]], list[list[float]]] | None:
@@ -330,6 +351,11 @@ def main() -> None:
         print("[example] Waiting for depth stream …")
         if not _poll_depth_warmup(ctrl):
             print("[example] Depth stream did not start — check camera connection.")
+            return
+
+        print("[example] Waiting for color stream …")
+        if not _poll_color_warmup(ctrl):
+            print("[example] Color stream did not start — check camera connection.")
             return
 
         extrinsic_np = np.array(_CAMERA_EXTRINSIC, dtype=np.float64)
