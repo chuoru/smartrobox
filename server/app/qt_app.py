@@ -1,7 +1,7 @@
 ##
 # @file qt_app.py
 #
-# @brief Qt application for displaying a MuJoCo simulation scene.
+# @brief Qt application for displaying a MuJoCo simulation scene and live camera feeds.
 #
 # @section author Author(s)
 # - Created by chuoru on 2026/06/20.
@@ -15,18 +15,32 @@ import time
 from collections import deque
 
 # External library
+import cv2
 import mujoco
 import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtGui import QImage, QPixmap, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
     QMainWindow,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
+
+# Internal library
+from app.config import Config
+from app.controller import Controller
+from app.logger import Logger
 
 _ENV_PATH = os.path.join(
     os.path.dirname(__file__), "..", "projects", "anlab", "envs", "anlab_mujoco.xml"
+)
+
+_DEVICE_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "projects", "anlab", "device.yaml"
 )
 
 _format = QSurfaceFormat()
@@ -159,15 +173,139 @@ class _SimThread(QThread):
         self.wait()
 
 
-class MuJoCoWindow(QMainWindow):
-    """! Main window that hosts the MuJoCo viewport."""
+class _CameraWidget(QLabel):
+    """! QLabel-based widget that renders a single Orbbec camera's BGR color frame.
 
-    def __init__(self, xml_path: str) -> None:
+    Converts incoming BGR numpy arrays to a scaled QPixmap.  When no frame is
+    available, a centered placeholder string is displayed instead.
+    """
+
+    def __init__(self, parent=None) -> None:
+        """! Initialise with blank placeholder state.
+
+        @param parent<QWidget|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        self._last_pixmap: QPixmap | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(320, 240)
+        self.setText("No signal")
+        self.setStyleSheet("color: gray; font-size: 14px;")
+
+    # =========================================================================
+    # PUBLIC METHODS
+    # =========================================================================
+
+    def set_frame(self, frame: np.ndarray | None, placeholder: str = "No signal") -> None:
+        """! Update the displayed image from a BGR numpy array.
+
+        @param frame<np.ndarray|None>: H×W×3 uint8 BGR array, or None.
+        @param placeholder<str>: Text shown when frame is None.
+        """
+        if frame is None:
+            self._last_pixmap = None
+            self.setPixmap(QPixmap())
+            self.setText(placeholder)
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, _ = rgb.shape
+        q_img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
+        self._last_pixmap = pixmap
+        self.setText("")
+        self.setPixmap(
+            pixmap.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:
+        """! Re-scale the cached pixmap when the widget is resized.
+
+        @param event<QResizeEvent>: Resize event from Qt.
+        """
+        super().resizeEvent(event)
+        if self._last_pixmap is not None:
+            self.setPixmap(
+                self._last_pixmap.scaled(
+                    self.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+
+class _CameraPanel(QWidget):
+    """! Side panel that displays all orbbec camera feeds simultaneously.
+
+    One _CameraWidget per camera is stacked vertically.  A 30 Hz QTimer
+    refreshes every feed on each tick.  Camera lifecycle (open/close) is
+    handled by the caller; this panel only reads frames.
+    """
+
+    _REFRESH_INTERVAL_MS: int = 33
+
+    def __init__(self, controller: Controller, camera_names: list[str], parent=None) -> None:
+        """! Build one camera widget per name and start the refresh timer.
+
+        @param controller<Controller>: Device controller used for frame retrieval.
+        @param camera_names<list[str]>: Ordered list of orbbec device names to display.
+        @param parent<QWidget|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        self._controller = controller
+        self._camera_names = camera_names
+        self._logger = Logger("CameraPanel", Logger.MAGENTA)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        self._widgets: dict[str, _CameraWidget] = {}
+        for name in camera_names:
+            header = QLabel(name)
+            header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            header.setStyleSheet("font-weight: bold; font-size: 12px;")
+            widget = _CameraWidget()
+            self._widgets[name] = widget
+            layout.addWidget(header)
+            layout.addWidget(widget, stretch=1)
+
+        self._timer = QTimer()
+        self._timer.setInterval(self._REFRESH_INTERVAL_MS)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start()
+
+    # =========================================================================
+    # PRIVATE METHODS
+    # =========================================================================
+
+    @Slot()
+    def _refresh(self) -> None:
+        """! Fetch the current color frame for every camera and update its widget."""
+        for name, widget in self._widgets.items():
+            try:
+                frame = self._controller.execute(name, "get_color_frame")
+            except Exception as exc:
+                self._logger.error(f"Frame fetch failed for '{name}': {exc}")
+                frame = None
+            widget.set_frame(frame)
+
+
+class MuJoCoWindow(QMainWindow):
+    """! Main window that hosts the MuJoCo viewport and an optional camera panel."""
+
+    def __init__(self, xml_path: str, controller: Controller | None = None) -> None:
         """! Load the scene from an XML file and build the UI.
 
         @param xml_path<str>: Absolute path to the MuJoCo XML scene file.
+        @param controller<Controller|None>: Device controller; when None the
+            camera panel is omitted and only the MuJoCo viewport is shown.
         """
         super().__init__()
+        self._controller = controller
         self._model = mujoco.MjModel.from_xml_path(xml_path)
         self._data = mujoco.MjData(self._model)
         self._cam = self._create_free_camera()
@@ -175,7 +313,24 @@ class MuJoCoWindow(QMainWindow):
         self._scn = mujoco.MjvScene(self._model, maxgeom=10000)
         self._viewport = Viewport(self._model, self._data, self._cam, self._opt, self._scn)
         self._viewport.updateRuntime.connect(self._show_runtime)
-        self.setCentralWidget(self._viewport)
+
+        if controller is not None:
+            camera_names = [
+                name
+                for name in controller.list_devices()
+                if controller.status(name)["type"] == "orbbec"
+            ]
+            self._camera_panel = _CameraPanel(controller, camera_names, self)
+            splitter = QSplitter(Qt.Orientation.Horizontal, self)
+            splitter.addWidget(self._viewport)
+            splitter.addWidget(self._camera_panel)
+            splitter.setStretchFactor(0, 3)
+            splitter.setStretchFactor(1, 1)
+            self.setCentralWidget(splitter)
+        else:
+            self._camera_panel = None
+            self.setCentralWidget(self._viewport)
+
         self.setWindowTitle("SmartRoBox — MuJoCo Viewer")
         self.showMaximized()
         self._sim_thread = _SimThread(self._model, self._data, self)
@@ -186,8 +341,10 @@ class MuJoCoWindow(QMainWindow):
     # =========================================================================
 
     def closeEvent(self, event) -> None:
-        """! Stop the simulation thread before closing."""
+        """! Stop the simulation thread and close all camera devices before closing."""
         self._sim_thread.stop()
+        if self._controller is not None:
+            self._controller.close_all()
         super().closeEvent(event)
 
     # =========================================================================
@@ -215,8 +372,13 @@ class MuJoCoWindow(QMainWindow):
 def main() -> None:
     """! Entry point — launch the Qt application and show the MuJoCo viewer."""
     xml_path = os.path.abspath(_ENV_PATH)
+    config = Config(os.path.abspath(_DEVICE_CONFIG_PATH))
+    controller = Controller(config)
+    for name in controller.list_devices():
+        if controller.status(name)["type"] == "orbbec":
+            controller.open(name)
     app = QApplication(sys.argv)
-    window = MuJoCoWindow(xml_path)
+    window = MuJoCoWindow(xml_path, controller)
     sys.exit(app.exec())
 
 
