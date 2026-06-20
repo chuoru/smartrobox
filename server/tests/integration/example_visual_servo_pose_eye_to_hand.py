@@ -236,10 +236,7 @@ def _phase_capture(
 
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is None:
-            print("[example] get_color_frame returned None")
             continue
-        print(f"[example] frame: shape={frame.shape} dtype={frame.dtype} "
-              f"max={int(frame.max())} mean={frame.mean():.1f}")
 
         poses = action.result() or []
         _draw_poses(frame, poses)
@@ -247,7 +244,7 @@ def _phase_capture(
         _draw_status(frame, hint)
         cv2.imshow("Capture target — head camera", frame)
 
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(30) & 0xFF
         if key == ord("q"):
             return None
         if key == ord(" ") and poses:
@@ -306,7 +303,7 @@ def _phase_servo(
         _draw_status(frame, "servoing — Q to cancel")
         cv2.imshow("Visual servo — head camera", frame)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if cv2.waitKey(30) & 0xFF == ord("q"):
             action.cancel()
             action.wait(timeout=2.0)
             break
