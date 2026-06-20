@@ -31,7 +31,7 @@ _RIGHT_HAND = "right_hand"
 _LEFT_HOME_KEY = "home_left"
 _RIGHT_HOME_KEY = "home_right"
 _MOVE_VEL = 20.0
-_OPEN_POSE = [0] * 6
+_OPEN_POSE = [255] * 6
 _DEVICE_FILE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
 )
