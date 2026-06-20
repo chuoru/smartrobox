@@ -2,7 +2,7 @@
 ##
 # @file estimate_hand.py
 #
-# @brief Action that runs YOLO11 hand pose estimation on a frame from an
+# @brief Action that runs MediaPipe hand pose estimation on a frame from an
 #        Orbbec camera and returns per-hand landmark detections.
 #
 # @section author Author(s)
@@ -14,8 +14,9 @@
 import time
 
 # External library
+import cv2
+import mediapipe as mp
 import numpy as np
-from ultralytics import YOLO
 
 # Internal library
 from actions.base import BaseAction
@@ -23,14 +24,14 @@ from app.controller import Controller
 
 
 class EstimateHandAction(BaseAction):
-    """! Captures one color frame from an Orbbec camera and runs YOLO11 hand
+    """! Captures one color frame from an Orbbec camera and runs MediaPipe hand
     pose estimation to detect hand landmarks.
 
-    The YOLO model is loaded once at construction time.  Each call to start()
-    grabs a fresh frame, runs inference, and returns detected hands ordered by
-    descending detection confidence.
+    The MediaPipe Hands solution is initialised once at construction time.
+    Each call to start() grabs a fresh frame, runs inference, and returns
+    detected hands ordered by descending detection confidence.
 
-    Keypoint layout (21 MediaPipe-style hand landmarks):
+    Keypoint layout (21 MediaPipe hand landmarks):
         0  WRIST
         1  THUMB_CMC          2  THUMB_MCP       3  THUMB_IP         4  THUMB_TIP
         5  INDEX_MCP          6  INDEX_PIP        7  INDEX_DIP        8  INDEX_TIP
@@ -43,9 +44,9 @@ class EstimateHandAction(BaseAction):
         [
             {
                 "keypoints":     [[x, y], ...],  # 21 landmarks, pixel coords
-                "keypoint_conf": [c, ...],        # 21 confidence floats
+                "keypoint_conf": [v, ...],        # 21 visibility scores (0–1)
                 "bbox":          [x1, y1, x2, y2],
-                "conf":          float,
+                "conf":          float,           # hand detection confidence
             },
             ...
         ]
@@ -59,32 +60,42 @@ class EstimateHandAction(BaseAction):
         self,
         controller: Controller,
         device_name: str,
-        model_name: str = "yolo11n-hand-pose.pt",
+        max_num_hands: int = 2,
+        min_detection_confidence: float = 0.5,
         warmup_timeout: float = 3.0,
     ) -> None:
-        """! Load the YOLO model and store action parameters.
+        """! Initialise the MediaPipe Hands solution and store action parameters.
 
         @param controller<Controller>: Controller used to dispatch device calls.
         @param device_name<str>: Registered name of the Orbbec camera device.
-        @param model_name<str>: YOLO11 hand pose model weight name or path.
-            Ultralytics auto-downloads named weights on first use.
+        @param max_num_hands<int>: Maximum number of hands to detect.
+        @param min_detection_confidence<float>: Minimum confidence threshold for
+            hand detection (0.0–1.0).
         @param warmup_timeout<float>: Seconds to poll for the first frame before
             giving up; accommodates camera hardware start-up delay.
         """
         super().__init__(controller)
         self._device_name = device_name
-        self._model_name = model_name
+        self._max_num_hands = max_num_hands
+        self._min_detection_confidence = min_detection_confidence
         self._warmup_timeout = warmup_timeout
-        self._model = YOLO(model_name)
+        self._hands = mp.solutions.hands.Hands(
+            static_image_mode=True,
+            max_num_hands=max_num_hands,
+            model_complexity=0,
+            min_detection_confidence=min_detection_confidence,
+        )
 
     def parameters(self) -> dict:
         """! Return the action's configuration parameters.
 
-        @return<dict>: {"device_name": ..., "model_name": ..., "warmup_timeout": ...}
+        @return<dict>: {"device_name": ..., "max_num_hands": ...,
+            "min_detection_confidence": ..., "warmup_timeout": ...}
         """
         return {
             "device_name": self._device_name,
-            "model_name": self._model_name,
+            "max_num_hands": self._max_num_hands,
+            "min_detection_confidence": self._min_detection_confidence,
             "warmup_timeout": self._warmup_timeout,
         }
 
@@ -103,10 +114,12 @@ class EstimateHandAction(BaseAction):
             raise RuntimeError(
                 f"No frame received from camera '{self._device_name}'"
             )
-        results = self._model(frame, verbose=False)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self._hands.process(rgb)
         if not self._checkpoint():
             return None
-        return self._extract_hands(results[0])
+        h, w = frame.shape[:2]
+        return self._extract_hands(results, w, h)
 
     # =========================================================================
     # PRIVATE METHODS
@@ -128,28 +141,38 @@ class EstimateHandAction(BaseAction):
                 return None
             time.sleep(0.05)
 
-    def _extract_hands(self, result) -> list[dict]:
-        """! Convert a YOLO Results object into a list of hand landmark dicts.
+    def _extract_hands(self, results, width: int, height: int) -> list[dict]:
+        """! Convert MediaPipe Hands results into a list of hand landmark dicts.
 
-        @param result: ultralytics Results object from a single image.
+        @param results: MediaPipe Hands solution output object.
+        @param width<int>: Frame width in pixels, used to denormalize x coords.
+        @param height<int>: Frame height in pixels, used to denormalize y coords.
         @return<list[dict]>: One dict per detected hand; empty list if none found.
         """
         hands = []
-        if result.keypoints is None or result.boxes is None:
+        if not results.multi_hand_landmarks:
             return hands
-        keypoints_xy = result.keypoints.xy.tolist()
-        keypoints_conf = result.keypoints.conf.tolist()
-        boxes_xyxy = result.boxes.xyxy.tolist()
-        boxes_conf = result.boxes.conf.tolist()
-        for kp_xy, kp_conf, bbox, conf in zip(
-            keypoints_xy, keypoints_conf, boxes_xyxy, boxes_conf
-        ):
+        handedness_list = results.multi_handedness or []
+        for i, hand_landmarks in enumerate(results.multi_hand_landmarks):
+            keypoints = [
+                [lm.x * width, lm.y * height] for lm in hand_landmarks.landmark
+            ]
+            keypoint_conf = [lm.visibility for lm in hand_landmarks.landmark]
+            xs = [pt[0] for pt in keypoints]
+            ys = [pt[1] for pt in keypoints]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
+            conf = (
+                handedness_list[i].classification[0].score
+                if i < len(handedness_list)
+                else 1.0
+            )
             hands.append(
                 {
-                    "keypoints": kp_xy,
-                    "keypoint_conf": kp_conf,
+                    "keypoints": keypoints,
+                    "keypoint_conf": keypoint_conf,
                     "bbox": bbox,
                     "conf": conf,
                 }
             )
+        hands.sort(key=lambda h: h["conf"], reverse=True)
         return hands

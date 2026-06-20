@@ -39,7 +39,7 @@ from app.controller import Controller
 
 _LEFT_ARM = "left_arm"
 _LEFT_CAMERA = "left_camera"
-_MODEL_NAME = "yolo11n-hand-pose.pt"
+_SERVO_MODEL_NAME = "yolo11n-hand-pose.pt"
 _KP_CONF_THRESHOLD = 0.5
 _ERROR_THRESHOLD = 25.0
 _STABLE_TICKS = 10
@@ -147,7 +147,7 @@ def _phase_capture(ctrl: Controller) -> list[list[float]] | None:
 
     while True:
         action = EstimateHandAction(
-            ctrl, _LEFT_CAMERA, _MODEL_NAME, warmup_timeout=_ESTIMATE_TIMEOUT
+            ctrl, _LEFT_CAMERA, warmup_timeout=_ESTIMATE_TIMEOUT
         )
         action.start()
         action.wait(timeout=_ESTIMATE_TIMEOUT + 1.0)
@@ -192,7 +192,7 @@ def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
         gain_matrix=_GAIN_MATRIX,
         cmd_period=0.016,
         timeout=_ACTION_TIMEOUT,
-        model_name=_MODEL_NAME,
+        model_name=_SERVO_MODEL_NAME,
         keypoint_conf_min=_KP_CONF_THRESHOLD,
         servo_space="joint",
         camera_config="eye_in_hand",

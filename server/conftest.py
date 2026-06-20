@@ -16,3 +16,6 @@ sys.modules.setdefault("pyorbbecsdk", _pyorbbecsdk_mock)
 # Stub ultralytics so action modules that import YOLO at module level can be
 # collected without the package installed in the test environment.
 sys.modules.setdefault("ultralytics", MagicMock())
+
+# Stub mediapipe so estimate_hand imports cleanly without the package installed.
+sys.modules.setdefault("mediapipe", MagicMock())

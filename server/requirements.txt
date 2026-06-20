@@ -9,5 +9,6 @@ minimalmodbus
 pyserial
 pymodbus==3.5.1
 ultralytics
+mediapipe
 mujoco
 PySide6
