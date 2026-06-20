@@ -46,6 +46,36 @@ class FairinoInterface:
         self._is_opened = True
         print(f"[FairinoInterface] Connection opened (debug={self._debug}).")
 
+    def enable(self) -> bool:
+        """! Switch to automatic mode, clear all faults, and enable the servo.
+
+        Call this once after open() and before any motion command.  The
+        sequence is: Mode(1) → ResetAllError() → RobotEnable(1), with a
+        short settle delay after enabling to let the drives energise.
+
+        @return<bool>: True if the robot is ready to move, False on any error.
+        """
+        if self._debug:
+            print("[FairinoInterface] enable (debug)")
+            return True
+        try:
+            ret = self.robot.Mode(1)
+            if ret != 0:
+                raise Exception(f"Mode error: {ret}")
+            time.sleep(0.5)
+            ret = self.robot.ResetAllError()
+            if ret != 0:
+                raise Exception(f"ResetAllError error: {ret}")
+            ret = self.robot.RobotEnable(1)
+            if ret != 0:
+                raise Exception(f"RobotEnable error: {ret}")
+            time.sleep(1.0)
+        except Exception as exception:
+            print(f"[enable] Failed: {exception}")
+            return False
+        print("[FairinoInterface] Robot enabled.")
+        return True
+
     def close(self):
         """! Close the fairino device connection."""
         if not self._is_opened:

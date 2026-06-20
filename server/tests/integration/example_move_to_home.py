@@ -74,6 +74,11 @@ def main() -> None:
         opened.append(device)
 
     try:
+        for device in (_LEFT_ARM, _RIGHT_ARM):
+            if not ctrl.execute(device, "enable"):
+                print(f"[example] Failed to enable '{device}'")
+                return
+
         for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
             joints = _load_home_joints(key)
             if joints is None:
