@@ -559,8 +559,8 @@ class MuJoCoWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._head_panel)
         splitter.addWidget(right)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
         self.setCentralWidget(splitter)
         self.setWindowTitle("SMARTROBOX — Massage")
 
