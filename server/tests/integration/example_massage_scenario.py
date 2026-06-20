@@ -21,6 +21,7 @@
 # Standard library
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -103,6 +104,44 @@ _TERMINAL_STATES = {ActionState.DONE, ActionState.FAILED, ActionState.CANCELLED}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _move_dual_arm(
+    ctrl: Controller,
+    left_key: str,
+    right_key: str,
+) -> bool:
+    """! Move left and right arms to named teaching points simultaneously.
+
+    @param ctrl<Controller>: Active controller.
+    @param left_key<str>: Teaching point key for the left arm.
+    @param right_key<str>: Teaching point key for the right arm.
+    @return<bool>: True if both arms reached their targets, False on any failure.
+    """
+    joints_left = _load_joints(left_key)
+    joints_right = _load_joints(right_key)
+    if joints_left is None or joints_right is None:
+        return False
+
+    results: dict[str, bool] = {}
+
+    def _move(device: str, joints: list[float]) -> None:
+        print(f"[scenario] Moving '{device}' to {left_key if device == _LEFT_ARM else right_key} ...")
+        ok = ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL)
+        results[device] = bool(ok)
+        if ok:
+            print(f"[scenario] '{device}' reached target.")
+        else:
+            print(f"[scenario] movej failed for '{device}'")
+
+    left_thread = threading.Thread(target=_move, args=(_LEFT_ARM, joints_left))
+    right_thread = threading.Thread(target=_move, args=(_RIGHT_ARM, joints_right))
+    left_thread.start()
+    right_thread.start()
+    left_thread.join()
+    right_thread.join()
+
+    return results.get(_LEFT_ARM, False) and results.get(_RIGHT_ARM, False)
+
 
 def _load_joints(key: str) -> list[float] | None:
     """! Load joint angles for a named teaching point from teaching_point.yaml.
@@ -380,15 +419,8 @@ def main() -> None:
                 return
 
         # -- Move to massage positions -----------------------------------------
-        for device, key in ((_LEFT_ARM, _LEFT_MASSAGE_KEY), (_RIGHT_ARM, _RIGHT_MASSAGE_KEY)):
-            joints = _load_joints(key)
-            if joints is None:
-                return
-            print(f"[scenario] Moving '{device}' to {key} ...")
-            if not ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL):
-                print(f"[scenario] movej failed for '{device}'")
-                return
-            print(f"[scenario] '{device}' reached {key}.")
+        if not _move_dual_arm(ctrl, _LEFT_MASSAGE_KEY, _RIGHT_MASSAGE_KEY):
+            return
 
         # -- Close thumb adduction on both hands --------------------------------
         for device in (_LEFT_HAND, _RIGHT_HAND):
@@ -420,15 +452,8 @@ def main() -> None:
         _phase_massage_both(ctrl)
 
         # -- Return to home ---------------------------------------------------
-        for device, key in ((_LEFT_ARM, _LEFT_HOME_KEY), (_RIGHT_ARM, _RIGHT_HOME_KEY)):
-            joints = _load_joints(key)
-            if joints is None:
-                return
-            print(f"[scenario] Moving '{device}' to {key} ...")
-            if not ctrl.execute(device, "movej", *joints, vel=_MOVE_VEL):
-                print(f"[scenario] movej failed for '{device}'")
-                return
-            print(f"[scenario] '{device}' reached {key}.")
+        if not _move_dual_arm(ctrl, _LEFT_HOME_KEY, _RIGHT_HOME_KEY):
+            return
 
         for device in (_LEFT_HAND, _RIGHT_HAND):
             ctrl.execute(device, "move", _OPEN_POSE)
