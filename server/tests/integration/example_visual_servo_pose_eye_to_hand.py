@@ -10,8 +10,7 @@
 #            EstimatePoseAction streams in a loop with COCO skeleton overlay.
 #            Press SPACE on a frame with a detected person to lock that pose
 #            as the servo target.  pixel_to_world lifts each keypoint to the
-#            camera frame; camera_extrinsic transforms them to the robot base
-#            frame for the 3D PBVS correction law.
+#            left arm base frame for the 3D PBVS correction law.
 #
 #        Phase 2 — Servo
 #            VisualServoAction (eye_to_hand, cart space) drives the left arm
@@ -26,6 +25,7 @@
 # Standard library
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -41,22 +41,32 @@ from app.config import Config
 from app.controller import Controller
 
 
-_LEFT_ARM = "left_arm"
+_LEFT_ARM    = "left_arm"
+_RIGHT_ARM   = "right_arm"
 _HEAD_CAMERA = "head_camera"
-_MODEL_NAME = "yolo11n-pose.pt"
+_MODEL_NAME        = "yolo11n-pose.pt"
 _KP_CONF_THRESHOLD = 0.4
-_ERROR_THRESHOLD = 30.0
-_STABLE_TICKS = 10
-_ACTION_TIMEOUT = 30.0
-_SERVO_GAIN_3D = 0.5
+_ERROR_THRESHOLD   = 30.0
+_STABLE_TICKS      = 10
+_ACTION_TIMEOUT    = 30.0
+_SERVO_GAIN_3D     = 0.5
 
 _DEVICE_FILE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
 )
 
-# 4×4 T_cam_to_base: head camera frame → left arm base frame (metres).
+# 4×4 T_cam_to_left_arm_base: head camera frame → left arm base frame (metres).
 # Replace with the result of a hand-eye calibration routine.
-_CAMERA_EXTRINSIC = [
+_LEFT_ARM_EXTRINSIC = [
+    [ 1.0,  0.0,  0.0,  0.0],
+    [ 0.0,  1.0,  0.0,  0.0],
+    [ 0.0,  0.0,  1.0,  1.5],
+    [ 0.0,  0.0,  0.0,  1.0],
+]
+
+# 4×4 T_cam_to_right_arm_base: head camera frame → right arm base frame (metres).
+# Replace with the result of a hand-eye calibration routine.
+_RIGHT_ARM_EXTRINSIC = [
     [ 1.0,  0.0,  0.0,  0.0],
     [ 0.0,  1.0,  0.0,  0.0],
     [ 0.0,  0.0,  1.0,  1.5],
@@ -71,10 +81,6 @@ _SKELETON = [
     (11, 13), (13, 15), (12, 14), (14, 16),
 ]
 
-
-# ---------------------------------------------------------------------------
-# Drawing helpers
-# ---------------------------------------------------------------------------
 
 def _draw_poses(frame, poses: list[dict]) -> None:
     """! Overlay bounding boxes, keypoints, and skeleton for each detected person.
@@ -127,10 +133,6 @@ def _draw_status(frame, text: str) -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
 
-# ---------------------------------------------------------------------------
-# 3D target capture helper
-# ---------------------------------------------------------------------------
-
 def _lift_to_base(
     ctrl: Controller,
     kps_2d: list[list[float]],
@@ -174,10 +176,6 @@ def _lift_to_base(
     return [p if p is not None else centroid for p in pts_base]
 
 
-# ---------------------------------------------------------------------------
-# Phase helpers
-# ---------------------------------------------------------------------------
-
 def _poll_depth_warmup(ctrl: Controller, timeout: float = 3.0) -> bool:
     """! Block until the head camera depth stream delivers its first frame.
 
@@ -185,7 +183,6 @@ def _poll_depth_warmup(ctrl: Controller, timeout: float = 3.0) -> bool:
     @param timeout<float>: Maximum wait in seconds.
     @return<bool>: True if depth is ready, False on timeout.
     """
-    import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if ctrl.execute(_HEAD_CAMERA, "get_depth_frame") is not None:
@@ -205,7 +202,6 @@ def _poll_color_warmup(ctrl: Controller, timeout: float = 5.0) -> bool:
     @param timeout<float>: Maximum wait in seconds.
     @return<bool>: True if a valid color frame arrived, False on timeout.
     """
-    import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
@@ -221,30 +217,28 @@ def _phase_capture(
     """! Stream pose estimation until the user captures a target pose.
 
     @param ctrl<Controller>: Active controller.
-    @param extrinsic<np.ndarray>: 4×4 T_cam_to_base (float64).
+    @param extrinsic<np.ndarray>: 4×4 T_cam_to_left_arm_base (float64).
     @return<tuple|None>: (target_kps_2d, target_kps_3d) or None if cancelled.
     """
     print("[example] Phase 1 — Pose capture (head camera)")
     print("[example]   SPACE: capture person as target | Q: quit")
 
     action = EstimatePoseAction(ctrl, _HEAD_CAMERA, _MODEL_NAME)
-    poses: list[dict] = []
-    action.reset()
-    action.start()
-
     while True:
-        if action.wait(timeout=0.05):
-            poses = action.result() or []
-            action.reset()
-            action.start()
-        elif action.state() in (ActionState.FAILED, ActionState.CANCELLED):
-            action.reset()
-            action.start()
+        action.reset()
+        action.start()
+        finished = action.wait(timeout=_ACTION_TIMEOUT)
+
+        if not finished or action.state() != ActionState.DONE:
+            print(f"[example] Pose action did not finish — "
+                  f"state={action.state()}, error={action.error()}")
+            continue
 
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is None:
             continue
 
+        poses = action.result() or []
         _draw_poses(frame, poses)
         hint = "SPACE: capture" if poses else "no person detected"
         _draw_status(frame, hint)
@@ -252,12 +246,8 @@ def _phase_capture(
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
-            action.cancel()
-            action.wait(timeout=2.0)
             return None
         if key == ord(" ") and poses:
-            action.cancel()
-            action.wait(timeout=2.0)
             person = poses[0]
             kps_2d = person["keypoints"]
             kp_confs = person["keypoint_conf"]
@@ -280,8 +270,8 @@ def _phase_servo(
 
     @param ctrl<Controller>: Active controller.
     @param target_kps_2d<list[list[float]]>: 17-keypoint pixel targets.
-    @param target_kps_3d<list[list[float]]>: 17-keypoint 3D targets in base frame.
-    @param extrinsic_raw<list[list[float]]>: 4×4 T_cam_to_base as plain list.
+    @param target_kps_3d<list[list[float]]>: 17-keypoint 3D targets in left arm base frame.
+    @param extrinsic_raw<list[list[float]]>: 4×4 T_cam_to_left_arm_base as plain list.
     """
     print("[example] Phase 2 — Visual servo (eye_to_hand, cart space)")
     print("[example]   Q: cancel")
@@ -339,12 +329,8 @@ def _phase_servo(
         print(f"[example] Action ended with state={state.value}")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main() -> None:
-    """! Open head camera and left arm, capture a human pose target, then servo."""
+    """! Open head camera and both arms, capture a human pose target, then servo."""
     ctrl = Controller(Config(_DEVICE_FILE))
 
     if not ctrl.open(_HEAD_CAMERA):
@@ -353,6 +339,12 @@ def main() -> None:
 
     if not ctrl.open(_LEFT_ARM):
         print(f"[example] Failed to open '{_LEFT_ARM}'")
+        ctrl.close(_HEAD_CAMERA)
+        return
+
+    if not ctrl.open(_RIGHT_ARM):
+        print(f"[example] Failed to open '{_RIGHT_ARM}'")
+        ctrl.close(_LEFT_ARM)
         ctrl.close(_HEAD_CAMERA)
         return
 
@@ -367,9 +359,9 @@ def main() -> None:
             print("[example] Color stream did not start — check camera connection.")
             return
 
-        extrinsic_np = np.array(_CAMERA_EXTRINSIC, dtype=np.float64)
+        left_ext = np.array(_LEFT_ARM_EXTRINSIC, dtype=np.float64)
 
-        captured = _phase_capture(ctrl, extrinsic_np)
+        captured = _phase_capture(ctrl, left_ext)
         cv2.destroyAllWindows()
 
         if captured is None:
@@ -377,9 +369,10 @@ def main() -> None:
             return
 
         target_kps_2d, target_kps_3d = captured
-        _phase_servo(ctrl, target_kps_2d, target_kps_3d, _CAMERA_EXTRINSIC)
+        _phase_servo(ctrl, target_kps_2d, target_kps_3d, _LEFT_ARM_EXTRINSIC)
 
     finally:
+        ctrl.close(_RIGHT_ARM)
         ctrl.close(_LEFT_ARM)
         ctrl.close(_HEAD_CAMERA)
         cv2.destroyAllWindows()
