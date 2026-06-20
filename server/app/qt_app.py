@@ -320,8 +320,8 @@ class MuJoCoWindow(QMainWindow):
             splitter = QSplitter(Qt.Orientation.Horizontal, self)
             splitter.addWidget(self._viewport)
             splitter.addWidget(self._camera_panel)
-            splitter.setStretchFactor(0, 2)
-            splitter.setStretchFactor(1, 1)
+            splitter.setStretchFactor(0, 3)
+            splitter.setStretchFactor(1, 2)
             self.setCentralWidget(splitter)
         else:
             self._camera_panel = None
