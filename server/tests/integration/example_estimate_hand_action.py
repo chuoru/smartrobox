@@ -14,14 +14,12 @@
 import math
 import os
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 # External library
 import cv2
-import yaml
 
 # Internal library
 from actions.base import ActionState
@@ -30,7 +28,10 @@ from app.config import Config
 from app.controller import Controller
 
 
-_DEVICE_NAME = "camera"
+_DEVICE_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "projects", "anlab", "device.yaml")
+)
+_DEVICE_NAME = "left_camera"
 _KP_CONF_THRESHOLD = 0.5
 _ACTION_TIMEOUT = 5.0
 
@@ -170,67 +171,52 @@ def main() -> None:
     """! Open an Orbbec camera, run EstimateHandAction in a loop, and display results
     including camera-frame position and distance to each detected hand wrist.
     """
-    device_cfg = {
-        "devices": {
-            _DEVICE_NAME: {
-                "type": "orbbec",
-                "params": {"device_index": 2},
-            }
-        }
-    }
-    fd, cfg_path = tempfile.mkstemp(suffix=".yaml")
+    ctrl = Controller(Config(_DEVICE_FILE))
+
+    if not ctrl.open(_DEVICE_NAME):
+        print(f"[example] Failed to open device '{_DEVICE_NAME}'")
+        return
+
+    print("[example] Waiting for depth stream …")
+    if not _poll_depth_warmup(ctrl):
+        print("[example] Depth stream did not start — check camera connection.")
+        ctrl.close(_DEVICE_NAME)
+        return
+
+    print("[example] Press 'q' to quit.")
     try:
-        with os.fdopen(fd, "w") as f:
-            yaml.safe_dump(device_cfg, f)
+        while True:
+            action = EstimateHandAction(ctrl, _DEVICE_NAME)
+            action.start()
+            finished = action.wait(timeout=_ACTION_TIMEOUT)
 
-        ctrl = Controller(Config(cfg_path))
+            if not finished or action.state() != ActionState.DONE:
+                print(f"[example] Action did not complete — state={action.state()}, error={action.error()}")
+                break
 
-        if not ctrl.open(_DEVICE_NAME):
-            print(f"[example] Failed to open device '{_DEVICE_NAME}'")
-            return
+            frame = ctrl.execute(_DEVICE_NAME, "get_color_frame")
+            if frame is None:
+                continue
 
-        print("[example] Waiting for depth stream …")
-        if not _poll_depth_warmup(ctrl):
-            print("[example] Depth stream did not start — check camera connection.")
-            ctrl.close(_DEVICE_NAME)
-            return
+            hands = action.result() or []
+            _draw_hands(frame, hands)
 
-        print("[example] Press 'q' to quit.")
-        try:
-            while True:
-                action = EstimateHandAction(ctrl, _DEVICE_NAME)
-                action.start()
-                finished = action.wait(timeout=_ACTION_TIMEOUT)
+            for idx, hand in enumerate(hands):
+                kps   = hand["keypoints"]
+                confs = hand["keypoint_conf"]
+                if len(kps) > _KP_WRIST and confs[_KP_WRIST] >= _KP_CONF_THRESHOLD:
+                    cam_xyz, dist_m = _get_hand_distance(ctrl, kps[_KP_WRIST])
+                    wrist_px = (int(kps[_KP_WRIST][0]), int(kps[_KP_WRIST][1]))
+                    _draw_distance_overlay(frame, idx, cam_xyz, dist_m, wrist_px)
+                    _print_hand_distance(idx, cam_xyz, dist_m)
 
-                if not finished or action.state() != ActionState.DONE:
-                    print(f"[example] Action did not complete — state={action.state()}, error={action.error()}")
-                    break
+            cv2.imshow("EstimateHandAction", frame)
 
-                frame = ctrl.execute(_DEVICE_NAME, "get_color_frame")
-                if frame is None:
-                    continue
-
-                hands = action.result() or []
-                _draw_hands(frame, hands)
-
-                for idx, hand in enumerate(hands):
-                    kps   = hand["keypoints"]
-                    confs = hand["keypoint_conf"]
-                    if len(kps) > _KP_WRIST and confs[_KP_WRIST] >= _KP_CONF_THRESHOLD:
-                        cam_xyz, dist_m = _get_hand_distance(ctrl, kps[_KP_WRIST])
-                        wrist_px = (int(kps[_KP_WRIST][0]), int(kps[_KP_WRIST][1]))
-                        _draw_distance_overlay(frame, idx, cam_xyz, dist_m, wrist_px)
-                        _print_hand_distance(idx, cam_xyz, dist_m)
-
-                cv2.imshow("EstimateHandAction", frame)
-
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-        finally:
-            ctrl.close(_DEVICE_NAME)
-            cv2.destroyAllWindows()
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
     finally:
-        os.unlink(cfg_path)
+        ctrl.close(_DEVICE_NAME)
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
