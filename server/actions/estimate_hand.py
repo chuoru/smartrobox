@@ -82,7 +82,7 @@ class EstimateHandAction(BaseAction):
         self._hands = mp.solutions.hands.Hands(
             static_image_mode=True,
             max_num_hands=max_num_hands,
-            model_complexity=0,
+            model_complexity=1,
             min_detection_confidence=min_detection_confidence,
         )
 
