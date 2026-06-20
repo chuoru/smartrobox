@@ -216,7 +216,7 @@ class _CameraWidget(QLabel):
         self.setPixmap(
             pixmap.scaled(
                 self.size(),
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
@@ -231,7 +231,7 @@ class _CameraWidget(QLabel):
             self.setPixmap(
                 self._last_pixmap.scaled(
                     self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
@@ -320,8 +320,8 @@ class MuJoCoWindow(QMainWindow):
             splitter = QSplitter(Qt.Orientation.Horizontal, self)
             splitter.addWidget(self._viewport)
             splitter.addWidget(self._camera_panel)
-            splitter.setStretchFactor(0, 1)
-            splitter.setStretchFactor(1, 2)
+            splitter.setStretchFactor(0, 3)
+            splitter.setStretchFactor(1, 1)
             self.setCentralWidget(splitter)
         else:
             self._camera_panel = None
