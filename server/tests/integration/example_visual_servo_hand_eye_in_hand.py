@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 # External library
 import cv2
+import mediapipe as mp
 
 # Internal library
 from actions.base import ActionState
@@ -127,6 +128,65 @@ def _draw_status(frame, text: str) -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
 
+def _detect_hand_fast(detector, frame) -> list[list[float]] | None:
+    """! Run MediaPipe on one frame and return 21 pixel-coord keypoints.
+
+    @param detector: mp.solutions.hands.Hands instance (reused across calls).
+    @param frame: BGR numpy array from the camera.
+    @return<list[list[float]]|None>: 21 [x, y] pixel coords, or None if no hand.
+    """
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = detector.process(rgb)
+    if not results.multi_hand_landmarks:
+        return None
+    h, w = frame.shape[:2]
+    return [
+        [lm.x * w, lm.y * h]
+        for lm in results.multi_hand_landmarks[0].landmark
+    ]
+
+
+def _draw_error_overlay(
+    frame,
+    current_kps: list[list[float]],
+    target_kps: list[list[float]],
+) -> float:
+    """! Draw current hand skeleton, error arrows to target, and mean error text.
+
+    Current hand is drawn in orange; arrows point from current to target in red.
+
+    @param frame: BGR numpy array; modified in-place.
+    @param current_kps<list[list[float]]>: Detected keypoints this frame.
+    @param target_kps<list[list[float]]>: Locked target pixel positions.
+    @return<float>: Mean pixel error across all 21 keypoints.
+    """
+    for i, j in _HAND_SKELETON:
+        if len(current_kps) > max(i, j):
+            cv2.line(
+                frame,
+                (int(current_kps[i][0]), int(current_kps[i][1])),
+                (int(current_kps[j][0]), int(current_kps[j][1])),
+                (0, 165, 255), 1,
+            )
+
+    total_err = 0.0
+    for (cx, cy), (tx, ty) in zip(current_kps, target_kps):
+        cv2.circle(frame, (int(cx), int(cy)), 3, (0, 165, 255), -1)
+        cv2.arrowedLine(
+            frame,
+            (int(cx), int(cy)), (int(tx), int(ty)),
+            (0, 0, 255), 1, tipLength=0.4,
+        )
+        total_err += ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
+
+    mean_err = total_err / max(len(current_kps), 1)
+    cv2.putText(
+        frame, f"error: {mean_err:.1f}px", (10, 28),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
+    )
+    return mean_err
+
+
 # ---------------------------------------------------------------------------
 # Phase helpers
 # ---------------------------------------------------------------------------
@@ -160,7 +220,13 @@ def _phase_capture(ctrl: Controller) -> list[list[float]] | None:
         for hand in hands:
             _draw_hand(frame, hand, _KP_CONF_THRESHOLD, (0, 200, 255))
 
-        hint = "SPACE: capture" if hands else "no hand detected"
+        if hands:
+            hint = (
+                f"SPACE: capture  |  "
+                f"hands={len(hands)}  conf={hands[0]['conf']:.2f}"
+            )
+        else:
+            hint = "no hand detected"
         _draw_status(frame, hint)
         cv2.imshow("Capture target — left camera", frame)
 
@@ -181,6 +247,14 @@ def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
     """
     print("[example] Phase 2 — Visual servo (eye_in_hand)")
     print("[example]   Q: cancel")
+    print("[example]   orange = current hand  |  green = target  |  red arrow = error")
+
+    detector = mp.solutions.hands.Hands(
+        static_image_mode=True,
+        max_num_hands=1,
+        model_complexity=0,
+        min_detection_confidence=0.5,
+    )
 
     action = VisualServoAction(
         ctrl,
@@ -205,7 +279,15 @@ def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
             continue
 
         _draw_target(frame, target_kps)
-        _draw_status(frame, "servoing — Q to cancel")
+
+        current_kps = _detect_hand_fast(detector, frame)
+        if current_kps:
+            _draw_error_overlay(frame, current_kps, target_kps)
+            status = "servoing — Q to cancel"
+        else:
+            status = "servoing — hand not detected — Q to cancel"
+
+        _draw_status(frame, status)
         cv2.imshow("Visual servo — left camera", frame)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -213,6 +295,7 @@ def _phase_servo(ctrl: Controller, target_kps: list[list[float]]) -> None:
             action.wait(timeout=2.0)
             break
 
+    detector.close()
     state = action.state()
     result = action.result()
 
