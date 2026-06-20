@@ -297,11 +297,23 @@ def _phase_servo(
     )
     action.start()
 
+    est_action = EstimatePoseAction(ctrl, _HEAD_CAMERA, _MODEL_NAME)
+    est_action.reset()
+    est_action.start()
+    latest_poses: list[dict] = []
+
     while not action.wait(timeout=0.05):
+        if est_action.wait(timeout=0):
+            if est_action.state() == ActionState.DONE:
+                latest_poses = est_action.result() or []
+            est_action.reset()
+            est_action.start()
+
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is None:
             continue
 
+        _draw_poses(frame, latest_poses)
         _draw_target_2d(frame, target_kps_2d)
         _draw_status(frame, "servoing — Q to cancel")
         cv2.imshow("Visual servo — head camera", frame)
@@ -310,6 +322,10 @@ def _phase_servo(
             action.cancel()
             action.wait(timeout=2.0)
             break
+
+    if est_action.state() in (ActionState.RUNNING, ActionState.PAUSED):
+        est_action.cancel()
+        est_action.wait(timeout=2.0)
 
     state = action.state()
     result = action.result()
