@@ -182,6 +182,116 @@ class _SimThread(QThread):
         self.wait()
 
 
+class _PoseEstimationThread(QThread):
+    """! Background QThread that runs YOLO11 pose estimation on a camera feed.
+
+    Loads the YOLO model inside run() so the main thread is never blocked at
+    construction time.  Emits frameReady with an annotated BGR ndarray on each
+    successful inference, or None when no camera frame is available.
+    """
+
+    frameReady = Signal(object)
+
+    def __init__(
+        self,
+        controller: Controller,
+        camera_name: str,
+        model_name: str = "yolo11n-pose.pt",
+        parent=None,
+    ) -> None:
+        """! Store parameters; the YOLO model is deferred to run().
+
+        @param controller<Controller>: Device controller used for frame retrieval.
+        @param camera_name<str>: Registered name of the head Orbbec camera.
+        @param model_name<str>: YOLO11 pose model weight name or path.
+        @param parent<QObject|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        self._controller = controller
+        self._camera_name = camera_name
+        self._model_name = model_name
+        self._running = False
+
+    # =========================================================================
+    # PUBLIC METHODS
+    # =========================================================================
+
+    def run(self) -> None:
+        from ultralytics import YOLO
+
+        model = YOLO(self._model_name)
+        self._running = True
+        while self._running:
+            try:
+                frame = self._controller.execute(self._camera_name, "get_color_frame")
+            except Exception:
+                frame = None
+            if frame is None:
+                self.frameReady.emit(None)
+            else:
+                results = model(frame, verbose=False)
+                self.frameReady.emit(results[0].plot())
+
+    def stop(self) -> None:
+        """! Signal the thread to stop and block until it exits."""
+        self._running = False
+        self.quit()
+        self.wait()
+
+
+class _HeadCameraPanel(QWidget):
+    """! Left panel for massage mode: head camera feed with live YOLO11 pose overlay.
+
+    Runs _PoseEstimationThread in the background and updates _CameraWidget via a
+    Qt signal-slot QueuedConnection on each annotated frame, keeping UI updates
+    on the main thread.
+    """
+
+    def __init__(
+        self,
+        controller: Controller,
+        camera_name: str,
+        model_name: str = "yolo11n-pose.pt",
+        parent=None,
+    ) -> None:
+        """! Build the widget and start the pose estimation thread.
+
+        @param controller<Controller>: Device controller for frame retrieval.
+        @param camera_name<str>: Registered name of the head Orbbec camera.
+        @param model_name<str>: YOLO11 pose model weight name or path.
+        @param parent<QWidget|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._camera_widget = _CameraWidget()
+        layout.addWidget(self._camera_widget, stretch=1)
+        self._thread = _PoseEstimationThread(controller, camera_name, model_name, parent=self)
+        self._thread.frameReady.connect(self._on_frame)
+        self._thread.start()
+
+    # =========================================================================
+    # PUBLIC METHODS
+    # =========================================================================
+
+    def stop(self) -> None:
+        """! Stop the pose estimation thread and block until it exits."""
+        self._thread.stop()
+
+    # =========================================================================
+    # PRIVATE METHODS
+    # =========================================================================
+
+    @Slot(object)
+    def _on_frame(self, frame: np.ndarray | None) -> None:
+        """! Receive an annotated frame from the pose thread and update the display.
+
+        @param frame<np.ndarray|None>: BGR annotated frame, or None for no signal.
+        """
+        self._camera_widget.set_frame(frame, "No signal")
+
+
 class _CameraWidget(QLabel):
     """! QLabel-based widget that renders a single Orbbec camera's BGR color frame.
 
@@ -374,13 +484,17 @@ class MuJoCoWindow(QMainWindow):
         self.showMaximized()
         self._sim_thread = _SimThread(self._model, self._data, self)
         self._sim_thread.start()
+        self._head_panel: _HeadCameraPanel | None = None
 
     # =========================================================================
     # PUBLIC METHODS
     # =========================================================================
 
     def closeEvent(self, event) -> None:
-        """! Stop the simulation thread and close all camera devices before closing."""
+        """! Stop all threads and close all camera devices before closing."""
+        if self._head_panel is not None:
+            self._head_panel.stop()
+            self._head_panel = None
         self._sim_thread.stop()
         if self._controller is not None:
             self._controller.close_all()
@@ -407,6 +521,9 @@ class MuJoCoWindow(QMainWindow):
         self.menuBar().addMenu(view_menu)
 
     def _toggle_mode(self) -> None:
+        if self._head_panel is not None:
+            self._head_panel.stop()
+            self._head_panel = None
         self._viewport.setParent(None)
         self._mode = Mode.MASSAGE if self._mode == Mode.NORMAL else Mode.NORMAL
         self._build_layout()
@@ -437,10 +554,10 @@ class MuJoCoWindow(QMainWindow):
             return
         main_cam = self._orbbec_names[2]
         side_cams = self._orbbec_names[:2]
-        left = _CameraPanel(self._controller, [main_cam], self)
+        self._head_panel = _HeadCameraPanel(self._controller, main_cam, parent=self)
         right = _MassageRightPanel(self._viewport, self._controller, side_cams, self)
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        splitter.addWidget(left)
+        splitter.addWidget(self._head_panel)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
