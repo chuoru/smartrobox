@@ -11,6 +11,7 @@
 # Standard library
 import os
 import sys
+import threading
 import time
 from collections import deque
 from enum import Enum
@@ -19,6 +20,7 @@ from enum import Enum
 import cv2
 import mujoco
 import numpy as np
+import yaml
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QImage, QPixmap, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -43,6 +45,10 @@ _ENV_PATH = os.path.join(
 
 _DEVICE_CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "projects", "anlab", "device.yaml"
+)
+
+_TEACHING_POINT_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "projects", "anlab", "teaching_point.yaml"
 )
 
 _format = QSurfaceFormat()
@@ -438,6 +444,250 @@ class _MassageRightPanel(QWidget):
         layout.addWidget(_CameraPanel(controller, camera_names), stretch=1)
 
 
+class _MassageScenarioThread(QThread):
+    """! Background QThread that runs the bilateral massage loop scenario.
+
+    Mirrors the logic of example_loop_massage_scenario.py: an infinite outer
+    loop of inner massage iterations followed by a handshake step.  Emits
+    statusUpdate on each step transition so the UI status bar stays current.
+    Stops cooperatively — the thread checks _stop_requested between steps and
+    cancels any active MassageActions immediately when stop() is called.
+    """
+
+    statusUpdate = Signal(str)
+
+    _LEFT_ARM   = "left_arm"
+    _RIGHT_ARM  = "right_arm"
+    _LEFT_HAND  = "left_hand"
+    _RIGHT_HAND = "right_hand"
+
+    _HOME_LEFT_KEY       = "home_left"
+    _HOME_RIGHT_KEY      = "home_right"
+    _MASSAGE_LEFT_KEY    = "massage_left"
+    _MASSAGE_RIGHT_KEY   = "massage_right"
+    _OPEN_LEFT_KEY       = "open_left"
+    _OPEN_RIGHT_KEY      = "open_right"
+    _HANDSHAKE_LEFT_KEY  = "handshake_left"
+    _HANDSHAKE_RIGHT_KEY = "handshake_right"
+
+    _MOVE_VEL            = 100.0
+    _TORQUE_LIMIT        = 180
+    _OPEN_POSE           = [255] * 6
+    _CLOSED_POSE         = [0] * 6
+    _CYCLES              = 100
+    _HALF_CLOSE_DURATION = 0.5
+    _OPEN_DURATION       = 0.5
+    _MASSAGE_TIMEOUT     = 30.0
+    _INNER_LOOP_COUNT    = 3
+    _HANDSHAKE_WAIT      = 5.0
+
+    def __init__(
+        self,
+        controller: Controller,
+        teaching_point_file: str,
+        parent=None,
+    ) -> None:
+        """! Store scenario parameters.
+
+        @param controller<Controller>: Active device controller with all devices open.
+        @param teaching_point_file<str>: Absolute path to teaching_point.yaml.
+        @param parent<QObject|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        self._controller = controller
+        self._teaching_point_file = teaching_point_file
+        self._stop_requested = False
+        self._active_massages: list = []
+        self._massages_lock = threading.Lock()
+
+    # =========================================================================
+    # PUBLIC METHODS
+    # =========================================================================
+
+    def run(self) -> None:
+        from actions.massage import MassageAction
+        from actions.base import ActionState
+
+        self.statusUpdate.emit("Enabling arms ...")
+        for arm in (self._LEFT_ARM, self._RIGHT_ARM):
+            if not self._controller.execute(arm, "enable"):
+                self.statusUpdate.emit(f"Failed to enable {arm}")
+                return
+
+        outer = 0
+        while not self._stop_requested:
+            outer += 1
+            self.statusUpdate.emit(f"Outer {outer} — starting")
+            for inner_idx in range(1, self._INNER_LOOP_COUNT + 1):
+                if self._stop_requested:
+                    break
+                label = f"Outer {outer} · Inner {inner_idx}/{self._INNER_LOOP_COUNT}"
+                if not self._inner_iteration(label, MassageAction, ActionState):
+                    self.statusUpdate.emit("Scenario failed — stopped")
+                    return
+            if self._stop_requested:
+                break
+            self.statusUpdate.emit(f"Outer {outer} — handshake")
+            if not self._step_handshake():
+                self.statusUpdate.emit("Handshake failed — stopped")
+                return
+            if self._stop_requested:
+                break
+            self.statusUpdate.emit(f"Outer {outer} — holding {self._HANDSHAKE_WAIT:.0f} s")
+            self._interruptible_sleep(self._HANDSHAKE_WAIT)
+            if self._stop_requested:
+                break
+            self.statusUpdate.emit(f"Outer {outer} — closing right hand")
+            self._controller.execute(self._RIGHT_HAND, "move", self._CLOSED_POSE)
+
+        self.statusUpdate.emit("Idle")
+
+    def stop(self) -> None:
+        """! Request stop, cancel active massage actions, and block until thread exits."""
+        self._stop_requested = True
+        with self._massages_lock:
+            for action in self._active_massages:
+                action.cancel()
+        self.wait()
+
+    # =========================================================================
+    # PRIVATE METHODS
+    # =========================================================================
+
+    def _load_joints(self, key: str) -> list[float] | None:
+        """! Load joint angles for a named teaching point.
+
+        @param key<str>: Top-level key in teaching_point.yaml.
+        @return<list[float]|None>: [j1..j6] in degrees, or None if not found.
+        """
+        if not os.path.exists(self._teaching_point_file):
+            return None
+        with open(self._teaching_point_file, "r") as fh:
+            data = yaml.safe_load(fh) or {}
+        if key not in data:
+            return None
+        block = data[key]["joint"]
+        return [float(block[k]) for k in ("j1", "j2", "j3", "j4", "j5", "j6")]
+
+    def _move_both_arms(self, left_key: str, right_key: str) -> bool:
+        """! Move both arms to named teaching points simultaneously.
+
+        @param left_key<str>: Teaching point key for the left arm.
+        @param right_key<str>: Teaching point key for the right arm.
+        @return<bool>: True if both arms reached their targets.
+        """
+        joints_left  = self._load_joints(left_key)
+        joints_right = self._load_joints(right_key)
+        if joints_left is None or joints_right is None:
+            return False
+        results: dict[str, bool] = {}
+
+        def _move(device: str, joints: list[float]) -> None:
+            results[device] = bool(
+                self._controller.execute(device, "movej", *joints, vel=self._MOVE_VEL)
+            )
+
+        left_t  = threading.Thread(target=_move, args=(self._LEFT_ARM,  joints_left))
+        right_t = threading.Thread(target=_move, args=(self._RIGHT_ARM, joints_right))
+        left_t.start()
+        right_t.start()
+        left_t.join()
+        right_t.join()
+        return results.get(self._LEFT_ARM, False) and results.get(self._RIGHT_ARM, False)
+
+    def _inner_iteration(self, label: str, MassageAction, ActionState) -> bool:
+        """! One inner iteration: massage both hands while arms cycle home→massage→open.
+
+        @param label<str>: Human-readable label for status updates.
+        @param MassageAction: MassageAction class (passed in to avoid import at class level).
+        @param ActionState: ActionState enum.
+        @return<bool>: True if all steps succeeded.
+        """
+        self.statusUpdate.emit(f"{label} — massage + home")
+        left_massage = MassageAction(
+            self._controller,
+            device_name=self._LEFT_HAND,
+            cycles=self._CYCLES,
+            half_close_duration=self._HALF_CLOSE_DURATION,
+            open_duration=self._OPEN_DURATION,
+            torque_limit=self._TORQUE_LIMIT,
+        )
+        right_massage = MassageAction(
+            self._controller,
+            device_name=self._RIGHT_HAND,
+            cycles=self._CYCLES,
+            half_close_duration=self._HALF_CLOSE_DURATION,
+            open_duration=self._OPEN_DURATION,
+            torque_limit=self._TORQUE_LIMIT,
+        )
+        with self._massages_lock:
+            self._active_massages = [left_massage, right_massage]
+        left_massage.start()
+        right_massage.start()
+
+        arm_ok = (
+            self._move_both_arms(self._HOME_LEFT_KEY,    self._HOME_RIGHT_KEY)
+            and self._move_both_arms(self._MASSAGE_LEFT_KEY, self._MASSAGE_RIGHT_KEY)
+            and self._move_both_arms(self._OPEN_LEFT_KEY,    self._OPEN_RIGHT_KEY)
+        )
+
+        left_massage.cancel()
+        right_massage.cancel()
+        left_massage.wait(timeout=self._MASSAGE_TIMEOUT)
+        right_massage.wait(timeout=self._MASSAGE_TIMEOUT)
+        with self._massages_lock:
+            self._active_massages = []
+
+        massage_ok = all(
+            a.state() in (ActionState.DONE, ActionState.CANCELLED)
+            for a in (left_massage, right_massage)
+        )
+        return arm_ok and massage_ok
+
+    def _step_handshake(self) -> bool:
+        """! Open both hands and move both arms to handshake positions in parallel.
+
+        @return<bool>: True if all four tasks completed successfully.
+        """
+        joints_left  = self._load_joints(self._HANDSHAKE_LEFT_KEY)
+        joints_right = self._load_joints(self._HANDSHAKE_RIGHT_KEY)
+        if joints_left is None or joints_right is None:
+            return False
+        results: dict[str, bool] = {}
+
+        def _open_hand(device: str) -> None:
+            results[device] = bool(self._controller.execute(device, "move", self._OPEN_POSE))
+
+        def _move_arm(device: str, joints: list[float]) -> None:
+            results[device] = bool(
+                self._controller.execute(device, "movej", *joints, vel=self._MOVE_VEL)
+            )
+
+        threads = [
+            threading.Thread(target=_open_hand, args=(self._LEFT_HAND,)),
+            threading.Thread(target=_open_hand, args=(self._RIGHT_HAND,)),
+            threading.Thread(target=_move_arm,  args=(self._LEFT_ARM,  joints_left)),
+            threading.Thread(target=_move_arm,  args=(self._RIGHT_ARM, joints_right)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return all(
+            results.get(d, False)
+            for d in (self._LEFT_HAND, self._RIGHT_HAND, self._LEFT_ARM, self._RIGHT_ARM)
+        )
+
+    def _interruptible_sleep(self, duration: float) -> None:
+        """! Sleep in small increments so _stop_requested is checked frequently.
+
+        @param duration<float>: Total sleep duration in seconds.
+        """
+        deadline = time.monotonic() + duration
+        while not self._stop_requested and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+
 class MuJoCoWindow(QMainWindow):
     """! Main window that hosts the MuJoCo viewport and an optional camera panel.
 
@@ -452,6 +702,7 @@ class MuJoCoWindow(QMainWindow):
         xml_path: str,
         controller: Controller | None = None,
         mode: Mode = Mode.NORMAL,
+        teaching_point_file: str = "",
     ) -> None:
         """! Load the scene from an XML file and build the UI.
 
@@ -459,10 +710,13 @@ class MuJoCoWindow(QMainWindow):
         @param controller<Controller|None>: Device controller; when None the
             camera panel is omitted and only the MuJoCo viewport is shown.
         @param mode<Mode>: Initial layout mode.
+        @param teaching_point_file<str>: Absolute path to teaching_point.yaml;
+            required to enable the massage scenario button.
         """
         super().__init__()
         self._controller = controller
         self._mode = mode
+        self._teaching_point_file = teaching_point_file
         self._model = mujoco.MjModel.from_xml_path(xml_path)
         self._data = mujoco.MjData(self._model)
         self._cam = self._create_free_camera()
@@ -485,6 +739,8 @@ class MuJoCoWindow(QMainWindow):
         self._sim_thread = _SimThread(self._model, self._data, self)
         self._sim_thread.start()
         self._head_panel: _HeadCameraPanel | None = None
+        self._scenario_thread: _MassageScenarioThread | None = None
+        self._scenario_status: str = "Idle"
 
     # =========================================================================
     # PUBLIC METHODS
@@ -492,6 +748,9 @@ class MuJoCoWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """! Stop all threads and close all camera devices before closing."""
+        if self._scenario_thread is not None:
+            self._scenario_thread.stop()
+            self._scenario_thread = None
         if self._head_panel is not None:
             self._head_panel.stop()
             self._head_panel = None
@@ -501,12 +760,14 @@ class MuJoCoWindow(QMainWindow):
         super().closeEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        """! Toggle layout mode when M is pressed.
+        """! Toggle layout mode on M; toggle massage scenario on S.
 
         @param event<QKeyEvent>: Key event from Qt.
         """
         if event.key() == Qt.Key.Key_M and self._controller is not None:
             self._toggle_mode()
+        elif event.key() == Qt.Key.Key_S and self._controller is not None:
+            self._toggle_scenario()
         super().keyPressEvent(event)
 
     # =========================================================================
@@ -519,6 +780,12 @@ class MuJoCoWindow(QMainWindow):
         toggle_action.triggered.connect(self._toggle_mode)
         view_menu.addAction(toggle_action)
         self.menuBar().addMenu(view_menu)
+
+        scenario_menu = QMenu("Scenario", self)
+        self._scenario_action = QAction("Start Scenario [S]", self)
+        self._scenario_action.triggered.connect(self._toggle_scenario)
+        scenario_menu.addAction(self._scenario_action)
+        self.menuBar().addMenu(scenario_menu)
 
     def _toggle_mode(self) -> None:
         if self._head_panel is not None:
@@ -564,10 +831,37 @@ class MuJoCoWindow(QMainWindow):
         self.setCentralWidget(splitter)
         self.setWindowTitle("SMARTROBOX — Massage")
 
+    def _toggle_scenario(self) -> None:
+        if self._scenario_thread is not None:
+            self._scenario_thread.stop()
+            self._scenario_thread = None
+            self._scenario_status = "Idle"
+            self._scenario_action.setText("Start Scenario [S]")
+        else:
+            if self._controller is None or not self._teaching_point_file:
+                return
+            self._scenario_thread = _MassageScenarioThread(
+                self._controller, self._teaching_point_file, parent=self
+            )
+            self._scenario_thread.statusUpdate.connect(self._on_scenario_status)
+            self._scenario_thread.finished.connect(self._on_scenario_finished)
+            self._scenario_thread.start()
+            self._scenario_action.setText("Stop Scenario [S]")
+
+    @Slot(str)
+    def _on_scenario_status(self, status: str) -> None:
+        self._scenario_status = status
+
+    @Slot()
+    def _on_scenario_finished(self) -> None:
+        self._scenario_thread = None
+        self._scenario_action.setText("Start Scenario [S]")
+
     @Slot(float)
     def _show_runtime(self, avg_time: float) -> None:
         self.statusBar().showMessage(
             f"Render: {avg_time:.2e}s  |  Sim time: {self._data.time:.1f}s"
+            f"  |  Scenario: {self._scenario_status}"
         )
 
     def _create_free_camera(self) -> mujoco.MjvCamera:
@@ -584,14 +878,14 @@ class MuJoCoWindow(QMainWindow):
 
 def main() -> None:
     """! Entry point — launch the Qt application and show the MuJoCo viewer."""
-    xml_path = os.path.abspath(_ENV_PATH)
-    config = Config(os.path.abspath(_DEVICE_CONFIG_PATH))
-    controller = Controller(config)
+    xml_path            = os.path.abspath(_ENV_PATH)
+    teaching_point_file = os.path.abspath(_TEACHING_POINT_PATH)
+    config              = Config(os.path.abspath(_DEVICE_CONFIG_PATH))
+    controller          = Controller(config)
     for name in controller.list_devices():
-        if controller.status(name)["type"] == "orbbec":
-            controller.open(name)
-    app = QApplication(sys.argv)
-    window = MuJoCoWindow(xml_path, controller)
+        controller.open(name)
+    app    = QApplication(sys.argv)
+    window = MuJoCoWindow(xml_path, controller, teaching_point_file=teaching_point_file)
     sys.exit(app.exec())
 
 
