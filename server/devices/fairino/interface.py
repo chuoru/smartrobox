@@ -59,13 +59,13 @@ class FairinoInterface:
             print("[FairinoInterface] enable (debug)")
             return True
         try:
+            ret = self.robot.ResetAllError()
+            if ret != 0:
+                raise Exception(f"ResetAllError error: {ret}")
             ret = self.robot.Mode(1)
             if ret != 0:
                 raise Exception(f"Mode error: {ret}")
             time.sleep(0.5)
-            ret = self.robot.ResetAllError()
-            if ret != 0:
-                raise Exception(f"ResetAllError error: {ret}")
             ret = self.robot.RobotEnable(1)
             if ret != 0:
                 raise Exception(f"RobotEnable error: {ret}")
