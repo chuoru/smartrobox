@@ -23,8 +23,8 @@ _OPEN = 255    # fully-open position value  (O6: 255 = extended/open)
 # Thumb adducted (yaw closed), all four fingers extended
 _THUMB_ADDUCT = [_OPEN, _CLOSED, _OPEN, _OPEN, _OPEN, _OPEN]
 
-# Thumb adducted, all four fingers half-closed
-_FINGERS_HALF = [_OPEN, _CLOSED, _HALF, _HALF, _HALF, _HALF]
+# Thumb adducted (yaw closed) + thumb pitch half-bent, all four fingers half-closed
+_FINGERS_HALF = [_HALF, _CLOSED, _HALF, _HALF, _HALF, _HALF]
 
 
 class MassageAction(BaseAction):
