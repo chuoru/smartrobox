@@ -165,6 +165,29 @@ class BaseAction:
         """
         return self._error
 
+    def reset(self) -> bool:
+        """! Reset the action to IDLE so it can be started again.
+
+        Safe to call on an already-IDLE action (no-op).  Must not be called
+        while the action is RUNNING or PAUSED; wait() first.
+
+        @return<bool>: True if the action is now IDLE, False if it is still
+            running or paused.
+        """
+        with self._lock:
+            if self._state in (ActionState.RUNNING, ActionState.PAUSED):
+                return False
+            if self._state == ActionState.IDLE:
+                return True
+            self._state = ActionState.IDLE
+            self._result = None
+            self._error = None
+            self._cancelled = False
+            self._thread = None
+        self._pause_event.set()
+        self._done_event.clear()
+        return True
+
     def parameters(self) -> dict:
         """! Return the action's configuration parameters.
 

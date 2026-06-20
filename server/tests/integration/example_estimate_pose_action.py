@@ -221,9 +221,10 @@ def main() -> None:
         right_ext = np.array(_RIGHT_ARM_EXTRINSIC, dtype=np.float64)
 
         print("[example] Press 'q' to quit.")
+        action = EstimatePoseAction(ctrl, _DEVICE_NAME, _MODEL_NAME)
         try:
             while True:
-                action = EstimatePoseAction(ctrl, _DEVICE_NAME, _MODEL_NAME)
+                action.reset()
                 action.start()
                 finished = action.wait(timeout=_ACTION_TIMEOUT)
 

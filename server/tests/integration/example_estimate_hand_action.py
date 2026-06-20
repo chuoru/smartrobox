@@ -184,9 +184,10 @@ def main() -> None:
         return
 
     print("[example] Press 'q' to quit.")
+    action = EstimateHandAction(ctrl, _DEVICE_NAME)
     try:
         while True:
-            action = EstimateHandAction(ctrl, _DEVICE_NAME)
+            action.reset()
             action.start()
             finished = action.wait(timeout=_ACTION_TIMEOUT)
 
