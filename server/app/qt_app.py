@@ -13,18 +13,20 @@ import os
 import sys
 import time
 from collections import deque
+from enum import Enum
 
 # External library
 import cv2
 import mujoco
 import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QImage, QPixmap, QSurfaceFormat
+from PySide6.QtGui import QAction, QImage, QPixmap, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
     QMainWindow,
+    QMenu,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -53,6 +55,13 @@ _format.setVersion(2, 0)
 _format.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
 _format.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
 QSurfaceFormat.setDefaultFormat(_format)
+
+
+class Mode(Enum):
+    """! Application layout mode."""
+
+    NORMAL = "normal"
+    MASSAGE = "massage"
 
 
 class Viewport(QOpenGLWidget):
@@ -290,18 +299,60 @@ class _CameraPanel(QWidget):
             widget.set_frame(frame)
 
 
-class MuJoCoWindow(QMainWindow):
-    """! Main window that hosts the MuJoCo viewport and an optional camera panel."""
+class _MassageRightPanel(QWidget):
+    """! Right panel for massage mode: MuJoCo viewport above the remaining camera feeds.
 
-    def __init__(self, xml_path: str, controller: Controller | None = None) -> None:
+    Stacks the viewport (stretch 2) on top of a _CameraPanel for the non-primary
+    cameras (stretch 1).
+    """
+
+    def __init__(
+        self,
+        viewport: Viewport,
+        controller: Controller,
+        camera_names: list[str],
+        parent=None,
+    ) -> None:
+        """! Build the composite panel.
+
+        @param viewport<Viewport>: Shared MuJoCo viewport widget.
+        @param controller<Controller>: Device controller for camera frame retrieval.
+        @param camera_names<list[str]>: Camera device names to show below the viewport.
+        @param parent<QWidget|None>: Optional Qt parent.
+        """
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(viewport, stretch=2)
+        layout.addWidget(_CameraPanel(controller, camera_names), stretch=1)
+
+
+class MuJoCoWindow(QMainWindow):
+    """! Main window that hosts the MuJoCo viewport and an optional camera panel.
+
+    Supports two layout modes toggled via the View menu or the M key:
+    - Normal: MuJoCo viewer on the left, all camera feeds on the right.
+    - Massage: Head camera (device index 2) on the left; MuJoCo viewer with
+      remaining cameras stacked on the right.
+    """
+
+    def __init__(
+        self,
+        xml_path: str,
+        controller: Controller | None = None,
+        mode: Mode = Mode.NORMAL,
+    ) -> None:
         """! Load the scene from an XML file and build the UI.
 
         @param xml_path<str>: Absolute path to the MuJoCo XML scene file.
         @param controller<Controller|None>: Device controller; when None the
             camera panel is omitted and only the MuJoCo viewport is shown.
+        @param mode<Mode>: Initial layout mode.
         """
         super().__init__()
         self._controller = controller
+        self._mode = mode
         self._model = mujoco.MjModel.from_xml_path(xml_path)
         self._data = mujoco.MjData(self._model)
         self._cam = self._create_free_camera()
@@ -310,24 +361,16 @@ class MuJoCoWindow(QMainWindow):
         self._viewport = Viewport(self._model, self._data, self._cam, self._opt, self._scn)
         self._viewport.updateRuntime.connect(self._show_runtime)
 
+        self._orbbec_names: list[str] = []
         if controller is not None:
-            camera_names = [
+            self._orbbec_names = [
                 name
                 for name in controller.list_devices()
                 if controller.status(name)["type"] == "orbbec"
             ]
-            self._camera_panel = _CameraPanel(controller, camera_names, self)
-            splitter = QSplitter(Qt.Orientation.Horizontal, self)
-            splitter.addWidget(self._viewport)
-            splitter.addWidget(self._camera_panel)
-            splitter.setStretchFactor(0, 3)
-            splitter.setStretchFactor(1, 2)
-            self.setCentralWidget(splitter)
-        else:
-            self._camera_panel = None
-            self.setCentralWidget(self._viewport)
 
-        self.setWindowTitle("SMARTROBOX")
+        self._build_layout()
+        self._build_menu()
         self.showMaximized()
         self._sim_thread = _SimThread(self._model, self._data, self)
         self._sim_thread.start()
@@ -343,9 +386,66 @@ class MuJoCoWindow(QMainWindow):
             self._controller.close_all()
         super().closeEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        """! Toggle layout mode when M is pressed.
+
+        @param event<QKeyEvent>: Key event from Qt.
+        """
+        if event.key() == Qt.Key.Key_M and self._controller is not None:
+            self._toggle_mode()
+        super().keyPressEvent(event)
+
     # =========================================================================
     # PRIVATE METHODS
     # =========================================================================
+
+    def _build_menu(self) -> None:
+        view_menu = QMenu("View", self)
+        toggle_action = QAction("Toggle Mode [M]", self)
+        toggle_action.triggered.connect(self._toggle_mode)
+        view_menu.addAction(toggle_action)
+        self.menuBar().addMenu(view_menu)
+
+    def _toggle_mode(self) -> None:
+        self._viewport.setParent(None)
+        self._mode = Mode.MASSAGE if self._mode == Mode.NORMAL else Mode.NORMAL
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        if self._controller is None or not self._orbbec_names:
+            self.setCentralWidget(self._viewport)
+            self.setWindowTitle("SMARTROBOX")
+            return
+        if self._mode == Mode.MASSAGE:
+            self._build_massage_layout()
+        else:
+            self._build_normal_layout()
+
+    def _build_normal_layout(self) -> None:
+        panel = _CameraPanel(self._controller, self._orbbec_names, self)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        splitter.addWidget(self._viewport)
+        splitter.addWidget(panel)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        self.setCentralWidget(splitter)
+        self.setWindowTitle("SMARTROBOX — Normal")
+
+    def _build_massage_layout(self) -> None:
+        if len(self._orbbec_names) < 3:
+            self._build_normal_layout()
+            return
+        main_cam = self._orbbec_names[2]
+        side_cams = self._orbbec_names[:2]
+        left = _CameraPanel(self._controller, [main_cam], self)
+        right = _MassageRightPanel(self._viewport, self._controller, side_cams, self)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        self.setCentralWidget(splitter)
+        self.setWindowTitle("SMARTROBOX — Massage")
 
     @Slot(float)
     def _show_runtime(self, avg_time: float) -> None:
