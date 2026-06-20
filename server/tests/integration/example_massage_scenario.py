@@ -7,9 +7,9 @@
 #        Steps:
 #          1. Move both arms to massage_left / massage_right teaching points.
 #          2. Close thumb adduction (yaw) on both hands.
-#          3. Auto-capture first confident person from head_camera.
-#          4. Visual servo both arms in parallel (eye_to_hand, PBVS) until
-#             each converges or times out.
+#          3. Wait for depth stream to become available.
+#          4. Visual servo both arms in parallel toward live shoulder positions
+#             until each converges or times out.
 #          5. Run MassageAction on both hands simultaneously.
 #          6. Return both arms to home_left / home_right; open both hands.
 #
@@ -36,7 +36,6 @@ import yaml
 
 # Internal library
 from actions.base import ActionState
-from actions.estimate_pose import EstimatePoseAction
 from actions.massage import MassageAction
 from actions.visual_servo import VisualServoAction
 from app.config import Config
@@ -56,9 +55,6 @@ _RIGHT_HOME_KEY = "home_right"
 
 _MODEL_NAME = "yolo11n-pose.pt"
 _KP_CONF_THRESHOLD = 0.4
-_MIN_VALID_KPS = 5
-_AUTO_CAPTURE_RETRIES = 10
-_ESTIMATE_TIMEOUT = 3.0
 
 _MOVE_VEL = 20.0
 _TORQUE_LIMIT = 180
@@ -66,9 +62,9 @@ _OPEN_POSE = [255] * 6
 # O6: thumb_cmc_pitch=open, thumb_cmc_yaw=closed, four fingers=open
 _THUMB_ADDUCT = [255, 0, 255, 255, 255, 255]
 
-_ERROR_THRESHOLD = 30.0
+_ERROR_THRESHOLD = 30.0   # mm — 3D distance between TCP and shoulder
 _STABLE_TICKS = 10
-_SERVO_GAIN_3D = 0.5
+_SERVO_GAIN = 0.5
 _SERVO_TIMEOUT = 30.0
 
 _CYCLES = 5
@@ -84,21 +80,23 @@ _TEACHING_POINT_FILE = os.path.abspath(
 )
 
 # 4×4 T_cam_to_base for head_camera → left_arm base (metres).
-# Replace with calibrated values from example_hand_eye_calibrate.py.
+# Axes: left_arm_z+ ~ cam_x-, left_arm_y+ ~ cam_z-, left_arm_x+ ~ cam_y+.
+# Left arm origin in camera frame: x=-0.1 m, y=+0.2 m, z=0.
 _LEFT_EXTRINSIC = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 1.5],
-    [0.0, 0.0, 0.0, 1.0],
+    [ 0.0,  1.0,  0.0, -0.2],
+    [ 0.0,  0.0, -1.0,  0.0],
+    [-1.0,  0.0,  0.0, -0.1],
+    [ 0.0,  0.0,  0.0,  1.0],
 ]
 
 # 4×4 T_cam_to_base for head_camera → right_arm base (metres).
-# Replace with calibrated values from example_hand_eye_calibrate.py.
+# Axes: right_arm_z+ ~ cam_x+, right_arm_y+ ~ cam_y+, right_arm_x+ ~ cam_z-.
+# Right arm origin in camera frame: x=+0.1 m, y=+0.2 m, z=0.
 _RIGHT_EXTRINSIC = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 1.5],
-    [0.0, 0.0, 0.0, 1.0],
+    [ 0.0,  0.0, -1.0,  0.0],
+    [ 0.0,  1.0,  0.0, -0.2],
+    [ 1.0,  0.0,  0.0, -0.1],
+    [ 0.0,  0.0,  0.0,  1.0],
 ]
 
 _TERMINAL_STATES = {ActionState.DONE, ActionState.FAILED, ActionState.CANCELLED}
@@ -179,184 +177,67 @@ def _poll_depth_warmup(ctrl: Controller, timeout: float = 3.0) -> bool:
     return False
 
 
-def _lift_to_base(
-    ctrl: Controller,
-    kps_2d: list[list[float]],
-    kp_confs: list[float],
-    extrinsic: np.ndarray,
-) -> list[list[float]]:
-    """! Lift 2D keypoints to a robot base frame via depth + extrinsic transform.
-
-    @param ctrl<Controller>: Active controller.
-    @param kps_2d<list[list[float]]>: 17 detected keypoint pixel positions.
-    @param kp_confs<list[float]>: 17 keypoint confidence values.
-    @param extrinsic<np.ndarray>: 4×4 T_cam_to_base (float64).
-    @return<list[list[float]]>: 17 [X, Y, Z] positions in base frame (metres).
-    """
-    pts_base = []
-    for kp, conf in zip(kps_2d, kp_confs):
-        if conf < _KP_CONF_THRESHOLD:
-            pts_base.append(None)
-            continue
-        cam_pt = ctrl.execute(_HEAD_CAMERA, "pixel_to_world", int(kp[0]), int(kp[1]))
-        if cam_pt is None:
-            pts_base.append(None)
-            continue
-        p_cam = np.array([cam_pt[0], cam_pt[1], cam_pt[2], 1.0])
-        pts_base.append((extrinsic @ p_cam)[:3].tolist())
-
-    valid = [p for p in pts_base if p is not None]
-    centroid = (
-        [sum(p[i] for p in valid) / len(valid) for i in range(3)] if valid else [0.0, 0.0, 0.0]
-    )
-    return [p if p is not None else centroid for p in pts_base]
-
-
-def _draw_target_2d(frame: np.ndarray, target_kps: list[list[float]]) -> None:
-    """! Draw target keypoints as green cross markers.
-
-    @param frame: BGR numpy array; modified in-place.
-    @param target_kps<list[list[float]]>: Target pixel positions [[x, y], ...].
-    """
-    for x, y in target_kps:
-        cv2.drawMarker(frame, (int(x), int(y)), (0, 255, 0), cv2.MARKER_CROSS, 10, 1)
-
-
 # ---------------------------------------------------------------------------
 # Phase helpers
 # ---------------------------------------------------------------------------
 
-def _auto_capture(
-    ctrl: Controller,
-    extrinsic_left: np.ndarray,
-    extrinsic_right: np.ndarray,
-) -> tuple[list[list[float]], list[list[float]], list[list[float]]] | None:
-    """! Run EstimatePoseAction until a confident person is detected.
+def _phase_servo_both(ctrl: Controller) -> None:
+    """! Start the dual-arm visual servo action and poll until convergence.
+
+    The action detects shoulder positions live each tick via YOLO11 and
+    drives each arm's TCP toward its respective shoulder until the 3D
+    error drops below _ERROR_THRESHOLD mm for _STABLE_TICKS ticks.
 
     @param ctrl<Controller>: Active controller.
-    @param extrinsic_left<np.ndarray>: 4×4 T_cam_to_base for left arm (float64).
-    @param extrinsic_right<np.ndarray>: 4×4 T_cam_to_base for right arm (float64).
-    @return<tuple|None>: (kps_2d, kps_3d_left, kps_3d_right) or None if no
-        confident detection found within _AUTO_CAPTURE_RETRIES attempts.
     """
-    print("[scenario] Auto-capturing target pose from head camera ...")
-    action = EstimatePoseAction(ctrl, _HEAD_CAMERA, _MODEL_NAME)
-    for attempt in range(1, _AUTO_CAPTURE_RETRIES + 1):
-        action.reset()
-        action.start()
-        action.wait(timeout=_ESTIMATE_TIMEOUT + 1.0)
+    print("[scenario] Phase servo — dual-arm live shoulder tracking (Q to cancel)")
 
-        poses = action.result() or []
-        if not poses:
-            print(f"[scenario]   attempt {attempt}/{_AUTO_CAPTURE_RETRIES}: no person detected")
-            continue
-
-        person = poses[0]
-        kps_2d = person["keypoints"]
-        kp_confs = person["keypoint_conf"]
-        n_valid = sum(1 for c in kp_confs if c >= _KP_CONF_THRESHOLD)
-
-        if n_valid < _MIN_VALID_KPS:
-            print(
-                f"[scenario]   attempt {attempt}/{_AUTO_CAPTURE_RETRIES}: "
-                f"only {n_valid}/{len(kps_2d)} confident keypoints"
-            )
-            continue
-
-        kps_3d_left = _lift_to_base(ctrl, kps_2d, kp_confs, extrinsic_left)
-        kps_3d_right = _lift_to_base(ctrl, kps_2d, kp_confs, extrinsic_right)
-        print(
-            f"[scenario] Target captured ({n_valid}/17 confident keypoints) — "
-            f"wrist_l={kps_3d_left[9]}, wrist_r={kps_3d_right[10]}"
-        )
-        return kps_2d, kps_3d_left, kps_3d_right
-
-    print("[scenario] Auto-capture failed: no confident detection after all retries.")
-    return None
-
-
-def _phase_servo_both(
-    ctrl: Controller,
-    target_kps_2d: list[list[float]],
-    kps_3d_left: list[list[float]],
-    kps_3d_right: list[list[float]],
-) -> None:
-    """! Start visual servo on both arms simultaneously and poll until both converge.
-
-    @param ctrl<Controller>: Active controller.
-    @param target_kps_2d<list[list[float]]>: 17-keypoint pixel targets.
-    @param kps_3d_left<list[list[float]]>: 17 3D targets in left arm base frame.
-    @param kps_3d_right<list[list[float]]>: 17 3D targets in right arm base frame.
-    """
-    print("[scenario] Phase servo — both arms in parallel (Q to cancel)")
-
-    left_servo = VisualServoAction(
+    servo = VisualServoAction(
         ctrl,
-        robot_device=_LEFT_ARM,
+        left_robot_device=_LEFT_ARM,
+        right_robot_device=_RIGHT_ARM,
         camera_device=_HEAD_CAMERA,
-        target_keypoints=target_kps_2d,
+        left_arm_extrinsic=_LEFT_EXTRINSIC,
+        right_arm_extrinsic=_RIGHT_EXTRINSIC,
         error_threshold=_ERROR_THRESHOLD,
         stable_ticks=_STABLE_TICKS,
+        servo_gain=_SERVO_GAIN,
         cmd_period=0.016,
         timeout=_SERVO_TIMEOUT,
         model_name=_MODEL_NAME,
         keypoint_conf_min=_KP_CONF_THRESHOLD,
-        camera_config="eye_to_hand",
-        camera_extrinsic=_LEFT_EXTRINSIC,
-        target_keypoints_3d=kps_3d_left,
-        servo_gain_3d=_SERVO_GAIN_3D,
     )
-    right_servo = VisualServoAction(
-        ctrl,
-        robot_device=_RIGHT_ARM,
-        camera_device=_HEAD_CAMERA,
-        target_keypoints=target_kps_2d,
-        error_threshold=_ERROR_THRESHOLD,
-        stable_ticks=_STABLE_TICKS,
-        cmd_period=0.016,
-        timeout=_SERVO_TIMEOUT,
-        model_name=_MODEL_NAME,
-        keypoint_conf_min=_KP_CONF_THRESHOLD,
-        camera_config="eye_to_hand",
-        camera_extrinsic=_RIGHT_EXTRINSIC,
-        target_keypoints_3d=kps_3d_right,
-        servo_gain_3d=_SERVO_GAIN_3D,
-    )
-
-    left_servo.start()
-    right_servo.start()
+    servo.start()
 
     while True:
         frame = ctrl.execute(_HEAD_CAMERA, "get_color_frame")
         if frame is not None:
-            _draw_target_2d(frame, target_kps_2d)
             cv2.imshow("Massage servo — head camera", frame)
 
         if cv2.waitKey(33) & 0xFF == ord("q"):
             print("[scenario] Servo cancelled by operator.")
-            left_servo.cancel()
-            right_servo.cancel()
+            servo.cancel()
             break
 
-        if left_servo.state() in _TERMINAL_STATES and right_servo.state() in _TERMINAL_STATES:
+        if servo.state() in _TERMINAL_STATES:
             break
 
-    left_servo.wait(timeout=2.0)
-    right_servo.wait(timeout=2.0)
+    servo.wait(timeout=2.0)
     cv2.destroyAllWindows()
 
-    for label, action in (("left", left_servo), ("right", right_servo)):
-        result = action.result()
-        if action.state() == ActionState.DONE and result:
-            print(
-                f"[scenario] {label} servo: converged={result['converged']}  "
-                f"stable_ticks={result['stable_ticks']}  "
-                f"final_error={result['final_error']:.2f}px"
-            )
-        elif action.state() == ActionState.FAILED:
-            print(f"[scenario] {label} servo failed: {action.error()}")
-        else:
-            print(f"[scenario] {label} servo ended: state={action.state().value}")
+    result = servo.result()
+    if servo.state() == ActionState.DONE and result:
+        print(
+            f"[scenario] servo: converged={result['converged']}  "
+            f"L stable={result['left_stable_ticks']}  "
+            f"R stable={result['right_stable_ticks']}  "
+            f"L err={result['left_final_error']:.1f}mm  "
+            f"R err={result['right_final_error']:.1f}mm"
+        )
+    elif servo.state() == ActionState.FAILED:
+        print(f"[scenario] servo failed: {servo.error()}")
+    else:
+        print(f"[scenario] servo ended: state={servo.state().value}")
 
 
 def _phase_massage_both(ctrl: Controller) -> None:
@@ -439,17 +320,8 @@ def main() -> None:
             print("[scenario] Depth stream did not start — check head_camera connection.")
             return
 
-        # -- Auto-capture target pose -----------------------------------------
-        extrinsic_left = np.array(_LEFT_EXTRINSIC, dtype=np.float64)
-        extrinsic_right = np.array(_RIGHT_EXTRINSIC, dtype=np.float64)
-
-        captured = _auto_capture(ctrl, extrinsic_left, extrinsic_right)
-        if captured is None:
-            return
-        target_kps_2d, kps_3d_left, kps_3d_right = captured
-
-        # -- Visual servo both arms -------------------------------------------
-        _phase_servo_both(ctrl, target_kps_2d, kps_3d_left, kps_3d_right)
+        # -- Visual servo both arms toward live shoulders ----------------------
+        _phase_servo_both(ctrl)
 
         # -- Massage both hands -----------------------------------------------
         _phase_massage_both(ctrl)

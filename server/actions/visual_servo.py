@@ -2,8 +2,8 @@
 ##
 # @file visual_servo.py
 #
-# @brief Action that visually servos a Fairino arm toward a target keypoint
-#        configuration using YOLO11 pose estimation as the feedback signal.
+# @brief Action that visually servos both Fairino arms toward the detected
+#        shoulder keypoints of a person using YOLO11 pose estimation.
 #
 # @section author Author(s)
 # - Created by chuoru on 2026/06/20.
@@ -24,28 +24,37 @@ from app.controller import Controller
 
 
 class VisualServoAction(BaseAction):
-    """! Visually servos a Fairino arm until pixel error drops below a threshold.
+    """! Drives left and right Fairino arms toward the detected left and right
+    shoulders of a person using YOLO11 pose estimation as the feedback signal.
 
     Each servo tick:
-      1. Captures a camera frame and runs YOLO11 pose estimation.
-      2. Computes the mean pixel offset between detected and target keypoints
-         (only keypoints whose confidence exceeds keypoint_conf_min contribute).
-      3. Sends a ServoJ command with joint corrections proportional to the
-         offset via gain_matrix.
-      4. Increments a stable counter when error < error_threshold; resets it
-         otherwise.
+      1. Captures a frame and runs YOLO11 pose estimation once.
+      2. Lifts the detected left and right shoulder keypoints to 3D positions
+         in their respective arm base frames via pixel_to_world + extrinsic.
+      3. Computes the error vector from each arm's current TCP to the shoulder
+         (both in mm).
+      4. Applies a proportional correction:
+         new_tcp[:3] = tcp[:3] - servo_gain * (tcp[:3] - shoulder_mm)
+      5. Sends servo_c commands to both arms.
 
-    The action exits successfully when stable_counter reaches stable_ticks, or
-    raises RuntimeError if timeout elapses first.
+    A tick where a shoulder is undetected or depth is unavailable is neutral —
+    the stable counter for that arm neither advances nor resets.  The action
+    exits successfully when both arms have been within error_threshold for
+    stable_ticks consecutive measured ticks, or raises RuntimeError on timeout.
 
     Result format::
 
         {
-            "converged":    bool,
-            "stable_ticks": int,   # consecutive ticks below threshold at exit
-            "final_error":  float, # pixel error on the last tick (inf if no detection)
+            "converged":          bool,
+            "left_stable_ticks":  int,
+            "right_stable_ticks": int,
+            "left_final_error":   float,  # mm at last measured tick, inf if never
+            "right_final_error":  float,
         }
     """
+
+    _KP_LEFT_SHOULDER  = 5
+    _KP_RIGHT_SHOULDER = 6
 
     # =========================================================================
     # PUBLIC METHODS
@@ -54,87 +63,62 @@ class VisualServoAction(BaseAction):
     def __init__(
         self,
         controller: Controller,
-        robot_device: str,
+        left_robot_device: str,
+        right_robot_device: str,
         camera_device: str,
-        target_keypoints: list[list[float]],
+        left_arm_extrinsic: list[list[float]],
+        right_arm_extrinsic: list[list[float]],
         error_threshold: float,
         stable_ticks: int,
-        gain_matrix: list[list[float]] | None = None,
+        servo_gain: float = 0.5,
         cmd_period: float = 0.016,
         timeout: float = 30.0,
         model_name: str = "yolo11n-pose.pt",
         warmup_timeout: float = 3.0,
         keypoint_conf_min: float = 0.5,
-        servo_space: str = "joint",
-        camera_config: str = "eye_in_hand",
-        camera_extrinsic: list[list[float]] | None = None,
-        target_keypoints_3d: list[list[float]] | None = None,
-        servo_gain_3d: float = 0.5,
     ) -> None:
         """! Load the YOLO model and store servo parameters.
 
         @param controller<Controller>: Controller used to dispatch device calls.
-        @param robot_device<str>: Registered name of the Fairino robot device.
-        @param camera_device<str>: Registered name of the Orbbec camera device.
-        @param target_keypoints<list[list[float]]>: COCO keypoint pixel targets
-            [[x, y], ...].  Length must match the model's output (17 for YOLO11).
-        @param error_threshold<float>: Pixel-distance threshold for convergence.
-        @param stable_ticks<int>: Consecutive ticks below threshold required to
-            declare convergence.
-        @param gain_matrix<list[list[float]]|None>: 6×2 matrix where
-            gain_matrix[i] = [gx, gy] maps (mean_ex, mean_ey) to Δi.
-            In "joint" space Δi is a joint increment (deg); in "cart" space Δi
-            is a TCP increment (mm for i<3, deg for i>=3).
-            Defaults to all-zero (monitoring only, no motion).
+        @param left_robot_device<str>: Registered name of the left Fairino arm.
+        @param right_robot_device<str>: Registered name of the right Fairino arm.
+        @param camera_device<str>: Registered name of the Orbbec head camera.
+        @param left_arm_extrinsic<list[list[float]]>: 4×4 T_cam_to_left_base
+            homogeneous transform (metres).
+        @param right_arm_extrinsic<list[list[float]]>: 4×4 T_cam_to_right_base
+            homogeneous transform (metres).
+        @param error_threshold<float>: 3D distance in mm below which an arm is
+            considered converged for a tick.
+        @param stable_ticks<int>: Number of consecutive below-threshold ticks
+            required from both arms to declare convergence.
+        @param servo_gain<float>: Proportional gain in (0, 1].  Controls how
+            aggressively the TCP chases the shoulder each tick.  Default 0.5.
         @param cmd_period<float>: Servo command interval in seconds.  Default 0.016.
         @param timeout<float>: Maximum run time in seconds.  Default 30.0.
         @param model_name<str>: YOLO11 pose model name or path.
-        @param warmup_timeout<float>: Seconds to poll for the first camera frame.
+        @param warmup_timeout<float>: Seconds to poll for the first color and
+            depth frame before raising RuntimeError.
         @param keypoint_conf_min<float>: Minimum YOLO keypoint confidence to
-            include a keypoint in the error computation.
-        @param servo_space<str>: "joint" (default) or "cart".  Selects whether
-            corrections are applied via servo_j or servo_c.
-        @param camera_config<str>: "eye_in_hand" (default) — existing IBVS
-            gain_matrix approach.  "eye_to_hand" — PBVS: pixel_to_world +
-            camera_extrinsic gives base-frame 3D error applied as a TCP
-            correction via servo_c.
-        @param camera_extrinsic<list[list[float]]|None>: 4×4 T_cam_to_base
-            homogeneous transform; required when camera_config == "eye_to_hand".
-        @param target_keypoints_3d<list[list[float]]|None>: Desired 3D keypoint
-            positions [[X, Y, Z], ...] in base frame (metres); required for
-            "eye_to_hand".
-        @param servo_gain_3d<float>: Scalar gain in [0, 1] applied to the mean
-            3D error vector.  Default 0.5.
-        @raises ValueError: If camera_config == "eye_to_hand" and
-            camera_extrinsic or target_keypoints_3d is None.
+            accept a shoulder detection.
+        @raises ValueError: If servo_gain is not in (0, 1].
         """
         super().__init__(controller)
-        self._robot_device = robot_device
-        self._camera_device = camera_device
-        self._target_keypoints = target_keypoints
-        self._error_threshold = error_threshold
-        self._stable_ticks = stable_ticks
-        self._gain_matrix = gain_matrix if gain_matrix is not None else [[0.0, 0.0]] * 6
-        self._cmd_period = cmd_period
-        self._timeout = timeout
-        self._warmup_timeout = warmup_timeout
+        if not (0.0 < servo_gain <= 1.0):
+            raise ValueError(f"servo_gain must be in (0, 1], got {servo_gain}")
+        self._left_robot_device  = left_robot_device
+        self._right_robot_device = right_robot_device
+        self._camera_device      = camera_device
+        self._left_arm_extrinsic  = np.array(left_arm_extrinsic,  dtype=np.float64)
+        self._right_arm_extrinsic = np.array(right_arm_extrinsic, dtype=np.float64)
+        self._error_threshold  = error_threshold
+        self._stable_ticks     = stable_ticks
+        self._servo_gain       = servo_gain
+        self._cmd_period       = cmd_period
+        self._timeout          = timeout
+        self._warmup_timeout   = warmup_timeout
         self._keypoint_conf_min = keypoint_conf_min
-        self._servo_space = servo_space
-        if camera_config == "eye_to_hand":
-            if camera_extrinsic is None or target_keypoints_3d is None:
-                raise ValueError(
-                    "eye_to_hand requires camera_extrinsic and target_keypoints_3d"
-                )
-        self._camera_config = camera_config
-        self._camera_extrinsic = (
-            np.array(camera_extrinsic, dtype=np.float64)
-            if camera_extrinsic is not None
-            else None
-        )
-        self._target_keypoints_3d = target_keypoints_3d
-        self._servo_gain_3d = servo_gain_3d
-        self._model = YOLO(model_name)
         self._model_name = model_name
+        self._model = YOLO(model_name)
 
     def parameters(self) -> dict:
         """! Return the action's configuration parameters.
@@ -142,15 +126,15 @@ class VisualServoAction(BaseAction):
         @return<dict>: Configuration snapshot.
         """
         return {
-            "robot_device": self._robot_device,
-            "camera_device": self._camera_device,
-            "error_threshold": self._error_threshold,
-            "stable_ticks": self._stable_ticks,
-            "cmd_period": self._cmd_period,
-            "timeout": self._timeout,
-            "model_name": self._model_name,
-            "servo_space": self._servo_space,
-            "camera_config": self._camera_config,
+            "left_robot_device":  self._left_robot_device,
+            "right_robot_device": self._right_robot_device,
+            "camera_device":      self._camera_device,
+            "error_threshold":    self._error_threshold,
+            "stable_ticks":       self._stable_ticks,
+            "servo_gain":         self._servo_gain,
+            "cmd_period":         self._cmd_period,
+            "timeout":            self._timeout,
+            "model_name":         self._model_name,
         }
 
     # =========================================================================
@@ -158,104 +142,157 @@ class VisualServoAction(BaseAction):
     # =========================================================================
 
     def _run(self) -> dict:
-        """! Run the visual servo loop until convergence or timeout.
+        """! Run the dual-arm visual servo loop until convergence or timeout.
 
-        @return<dict>: {"converged", "stable_ticks", "final_error"}.
-        @raises RuntimeError: If no camera frame arrives within warmup_timeout,
-            or if timeout elapses before convergence.
+        @return<dict>: {"converged", "left_stable_ticks", "right_stable_ticks",
+            "left_final_error", "right_final_error"}.
+        @raises RuntimeError: If no camera frame or depth frame arrives within
+            warmup_timeout, if tpos() fails on either arm, or if timeout elapses
+            before both arms converge.
         """
         frame = self._poll_for_frame()
         if frame is None:
             raise RuntimeError(
-                f"No frame received from camera '{self._camera_device}'"
+                f"No color frame received from camera '{self._camera_device}'"
             )
 
-        if self._camera_config == "eye_to_hand":
-            self._servo_space = "cart"
-            depth_deadline = time.monotonic() + self._warmup_timeout
-            while True:
-                if self._call(self._camera_device, "get_depth_frame") is not None:
-                    break
-                if time.monotonic() >= depth_deadline:
-                    raise RuntimeError(
-                        f"No depth frame received from camera '{self._camera_device}'"
-                    )
-                if not self._checkpoint():
-                    return {"converged": False, "stable_ticks": 0, "final_error": math.inf}
-                time.sleep(0.05)
-
-        self._call(self._robot_device, "servo_start")
-
-        if self._servo_space == "cart":
-            ret, pose = self._call(self._robot_device, "tpos")
-            if ret != 0:
-                pose = [0.0] * 6
-        else:
-            ret, joint_pos = self._call(self._robot_device, "get_joint_pos")
-            if ret != 0:
-                joint_pos = [0.0] * 6
-
-        stable_counter = 0
-        error = math.inf
-        deadline = time.monotonic() + self._timeout
-        converged = False
-
+        depth_deadline = time.monotonic() + self._warmup_timeout
         while True:
-            frame = self._call(self._camera_device, "get_color_frame")
-            if frame is not None:
-                if self._camera_config == "eye_to_hand":
-                    yolo_results = self._model(frame, verbose=False)
-                    error, mean_ex, mean_ey = self._compute_error(frame, yolo_results)
-                else:
-                    error, mean_ex, mean_ey = self._compute_error(frame)
+            if self._call(self._camera_device, "get_depth_frame") is not None:
+                break
+            if time.monotonic() >= depth_deadline:
+                raise RuntimeError(
+                    f"No depth frame received from camera '{self._camera_device}'"
+                )
+            if not self._checkpoint():
+                return {
+                    "converged": False,
+                    "left_stable_ticks": 0,
+                    "right_stable_ticks": 0,
+                    "left_final_error": math.inf,
+                    "right_final_error": math.inf,
+                }
+            time.sleep(0.05)
 
-                if error < self._error_threshold:
-                    stable_counter += 1
-                else:
-                    stable_counter = 0
+        try:
+            self._call(self._left_robot_device,  "servo_start")
+            self._call(self._right_robot_device, "servo_start")
 
-                if stable_counter >= self._stable_ticks:
+            left_ret,  left_tcp  = self._call(self._left_robot_device,  "tpos")
+            right_ret, right_tcp = self._call(self._right_robot_device, "tpos")
+
+            if left_ret != 0:
+                raise RuntimeError(
+                    f"tpos() failed on '{self._left_robot_device}': code={left_ret}"
+                )
+            if right_ret != 0:
+                raise RuntimeError(
+                    f"tpos() failed on '{self._right_robot_device}': code={right_ret}"
+                )
+
+            left_tcp  = list(left_tcp)
+            right_tcp = list(right_tcp)
+
+            left_stable  = 0
+            right_stable = 0
+            left_error   = math.inf
+            right_error  = math.inf
+            converged    = False
+            deadline     = time.monotonic() + self._timeout
+
+            while True:
+                frame = self._call(self._camera_device, "get_color_frame")
+                if frame is None:
+                    if not self._checkpoint():
+                        break
+                    time.sleep(self._cmd_period)
+                    continue
+
+                results = self._model(frame, verbose=False)
+                result  = results[0]
+
+                left_kp_xy  = None
+                right_kp_xy = None
+
+                if result.boxes is not None and result.boxes.conf.tolist():
+                    kp_xy   = result.keypoints.xy.tolist()[0]
+                    kp_conf = result.keypoints.conf.tolist()[0]
+
+                    if (len(kp_xy) > self._KP_LEFT_SHOULDER
+                            and kp_conf[self._KP_LEFT_SHOULDER] >= self._keypoint_conf_min):
+                        left_kp_xy = kp_xy[self._KP_LEFT_SHOULDER]
+
+                    if (len(kp_xy) > self._KP_RIGHT_SHOULDER
+                            and kp_conf[self._KP_RIGHT_SHOULDER] >= self._keypoint_conf_min):
+                        right_kp_xy = kp_xy[self._KP_RIGHT_SHOULDER]
+
+                if left_kp_xy is not None:
+                    left_shoulder_mm = self._lift_shoulder(
+                        left_kp_xy, self._left_arm_extrinsic
+                    )
+                    if left_shoulder_mm is not None:
+                        ex = left_tcp[0] - left_shoulder_mm[0]
+                        ey = left_tcp[1] - left_shoulder_mm[1]
+                        ez = left_tcp[2] - left_shoulder_mm[2]
+                        left_error = math.sqrt(ex * ex + ey * ey + ez * ez)
+                        if left_error >= self._error_threshold:
+                            left_tcp[0] -= self._servo_gain * ex
+                            left_tcp[1] -= self._servo_gain * ey
+                            left_tcp[2] -= self._servo_gain * ez
+                            self._call(
+                                self._left_robot_device, "servo_c",
+                                left_tcp, self._cmd_period
+                            )
+                            left_stable = 0
+                        else:
+                            left_stable += 1
+
+                if right_kp_xy is not None:
+                    right_shoulder_mm = self._lift_shoulder(
+                        right_kp_xy, self._right_arm_extrinsic
+                    )
+                    if right_shoulder_mm is not None:
+                        ex = right_tcp[0] - right_shoulder_mm[0]
+                        ey = right_tcp[1] - right_shoulder_mm[1]
+                        ez = right_tcp[2] - right_shoulder_mm[2]
+                        right_error = math.sqrt(ex * ex + ey * ey + ez * ez)
+                        if right_error >= self._error_threshold:
+                            right_tcp[0] -= self._servo_gain * ex
+                            right_tcp[1] -= self._servo_gain * ey
+                            right_tcp[2] -= self._servo_gain * ez
+                            self._call(
+                                self._right_robot_device, "servo_c",
+                                right_tcp, self._cmd_period
+                            )
+                            right_stable = 0
+                        else:
+                            right_stable += 1
+
+                if left_stable >= self._stable_ticks and right_stable >= self._stable_ticks:
                     converged = True
                     break
 
                 if time.monotonic() > deadline:
-                    self._call(self._robot_device, "servo_end")
                     raise RuntimeError(
                         f"Visual servo timed out after {self._timeout}s "
-                        f"(final error={error:.2f}px)"
+                        f"(left_error={left_error:.1f}mm, right_error={right_error:.1f}mm)"
                     )
 
-                if not math.isinf(error):
-                    if self._camera_config == "eye_to_hand":
-                        dx, dy, dz = self._compute_3d_correction(frame, yolo_results)
-                        if dx != 0.0 or dy != 0.0 or dz != 0.0:
-                            pose[0] += dx * 1000.0 * self._servo_gain_3d
-                            pose[1] += dy * 1000.0 * self._servo_gain_3d
-                            pose[2] += dz * 1000.0 * self._servo_gain_3d
-                            self._call(self._robot_device, "servo_c", pose, self._cmd_period)
-                    else:
-                        delta = [
-                            self._gain_matrix[i][0] * mean_ex
-                            + self._gain_matrix[i][1] * mean_ey
-                            for i in range(6)
-                        ]
-                        if self._servo_space == "cart":
-                            pose = [p + d for p, d in zip(pose, delta)]
-                            self._call(self._robot_device, "servo_c", pose, self._cmd_period)
-                        else:
-                            joint_pos = [jp + dj for jp, dj in zip(joint_pos, delta)]
-                            self._call(self._robot_device, "servo_j", joint_pos, self._cmd_period)
+                if not self._checkpoint():
+                    break
 
-            if not self._checkpoint():
-                break
+                time.sleep(self._cmd_period)
 
-            time.sleep(self._cmd_period)
+        finally:
+            self._call(self._left_robot_device,  "servo_end")
+            self._call(self._right_robot_device, "servo_end")
 
-        self._call(self._robot_device, "servo_end")
         return {
-            "converged": converged,
-            "stable_ticks": stable_counter,
-            "final_error": error,
+            "converged":          converged,
+            "left_stable_ticks":  left_stable,
+            "right_stable_ticks": right_stable,
+            "left_final_error":   left_error,
+            "right_final_error":  right_error,
         }
 
     # =========================================================================
@@ -278,87 +315,25 @@ class VisualServoAction(BaseAction):
                 return None
             time.sleep(0.05)
 
-    def _compute_error(
-        self, frame: np.ndarray, yolo_results=None
-    ) -> tuple[float, float, float]:
-        """! Run YOLO on a frame and compute the mean pixel error vs. target.
+    def _lift_shoulder(
+        self,
+        kp_xy: list[float],
+        extrinsic: np.ndarray,
+    ) -> tuple[float, float, float] | None:
+        """! Lift a keypoint pixel to a 3D position in the arm base frame (mm).
 
-        Only the first detected person is used.  Keypoints below
-        keypoint_conf_min are excluded.
-
-        @param frame<np.ndarray>: BGR camera frame.
-        @param yolo_results: Pre-computed YOLO output; runs inference if None.
-        @return<tuple[float, float, float]>: (error, mean_ex, mean_ey).
-            error is inf when no valid keypoints are available.
+        @param kp_xy<list[float]>: [u, v] pixel coordinate of the shoulder.
+        @param extrinsic<np.ndarray>: 4×4 T_cam_to_arm_base (metres).
+        @return<tuple[float,float,float]|None>: (X, Y, Z) in mm in the arm base
+            frame, or None if depth is unavailable at that pixel.
         """
-        results = yolo_results if yolo_results is not None else self._model(frame, verbose=False)
-        result = results[0]
-
-        if result.boxes is None or not result.boxes.conf.tolist():
-            return math.inf, 0.0, 0.0
-
-        kp_xy = result.keypoints.xy.tolist()[0]
-        kp_conf = result.keypoints.conf.tolist()[0]
-
-        pairs = [
-            (kp_xy[i], self._target_keypoints[i])
-            for i in range(min(len(kp_xy), len(self._target_keypoints)))
-            if kp_conf[i] >= self._keypoint_conf_min
-        ]
-
-        if not pairs:
-            return math.inf, 0.0, 0.0
-
-        mean_ex = sum(cur[0] - tgt[0] for cur, tgt in pairs) / len(pairs)
-        mean_ey = sum(cur[1] - tgt[1] for cur, tgt in pairs) / len(pairs)
-        error = math.sqrt(mean_ex ** 2 + mean_ey ** 2)
-        return error, mean_ex, mean_ey
-
-    def _compute_3d_correction(
-        self, frame: np.ndarray, yolo_results=None
-    ) -> tuple[float, float, float]:
-        """! Compute mean 3D correction vector from detected keypoints to target.
-
-        Lifts each valid YOLO keypoint to the camera frame via pixel_to_world,
-        transforms to the base frame via camera_extrinsic, and returns the mean
-        offset to target_keypoints_3d.  Keypoints with no depth are skipped.
-
-        @param frame<np.ndarray>: BGR camera frame.
-        @param yolo_results: Pre-computed YOLO output; runs inference if None.
-        @return<tuple[float, float, float]>: Mean (dx, dy, dz) in base frame
-            metres (detected − target).  Returns (0.0, 0.0, 0.0) when no valid
-            keypoints are available.
-        """
-        results = yolo_results if yolo_results is not None else self._model(frame, verbose=False)
-        result = results[0]
-
-        if result.boxes is None or not result.boxes.conf.tolist():
-            return 0.0, 0.0, 0.0
-
-        kp_xy = result.keypoints.xy.tolist()[0]
-        kp_conf = result.keypoints.conf.tolist()[0]
-
-        deltas = []
-        n_kp = min(len(kp_xy), len(self._target_keypoints_3d))
-        for i in range(n_kp):
-            if kp_conf[i] < self._keypoint_conf_min:
-                continue
-            u = int(round(kp_xy[i][0]))
-            v = int(round(kp_xy[i][1]))
-            cam_pt = self._call(self._camera_device, "pixel_to_world", u, v)
-            if cam_pt is None:
-                continue
-            p_cam = np.array([cam_pt[0], cam_pt[1], cam_pt[2], 1.0])
-            p_base = self._camera_extrinsic @ p_cam
-            tgt = self._target_keypoints_3d[i]
-            deltas.append((p_base[0] - tgt[0], p_base[1] - tgt[1], p_base[2] - tgt[2]))
-
-        if not deltas:
-            return 0.0, 0.0, 0.0
-
-        n = len(deltas)
-        return (
-            sum(d[0] for d in deltas) / n,
-            sum(d[1] for d in deltas) / n,
-            sum(d[2] for d in deltas) / n,
-        )
+        u = int(round(kp_xy[0]))
+        v = int(round(kp_xy[1]))
+        cam_pt = self._call(self._camera_device, "pixel_to_world", u, v)
+        if cam_pt is None:
+            return None
+        p_h    = np.array([cam_pt[0], cam_pt[1], cam_pt[2], 1.0])
+        p_base = extrinsic @ p_h
+        return (float(p_base[0] * 1000.0),
+                float(p_base[1] * 1000.0),
+                float(p_base[2] * 1000.0))

@@ -73,15 +73,18 @@ def _make_visual_servo(
 ) -> VisualServoAction:
     return VisualServoAction(
         controller,
-        robot_device=params["robot_device"],
+        left_robot_device=params["left_robot_device"],
+        right_robot_device=params["right_robot_device"],
         camera_device=params["camera_device"],
-        target_keypoints=params["target_keypoints"],
+        left_arm_extrinsic=params["left_arm_extrinsic"],
+        right_arm_extrinsic=params["right_arm_extrinsic"],
         error_threshold=float(params["error_threshold"]),
         stable_ticks=int(params["stable_ticks"]),
-        gain_matrix=params.get("gain_matrix", [[0.0, 0.0]] * 6),
+        servo_gain=float(params.get("servo_gain", 0.5)),
         cmd_period=float(params.get("cmd_period", 0.016)),
         timeout=float(params.get("timeout", 30.0)),
         model_name=params.get("model", "yolo11n-pose.pt"),
+        keypoint_conf_min=float(params.get("keypoint_conf_min", 0.5)),
     )
 
 
