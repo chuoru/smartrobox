@@ -29,6 +29,9 @@ import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+# Disable X11 MIT-SHM so cv2.imshow renders correctly over X11 forwarding.
+os.environ.setdefault("QT_X11_NO_MITSHM", "1")
+
 # External library
 import cv2
 import numpy as np
