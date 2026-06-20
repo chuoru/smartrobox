@@ -338,5 +338,208 @@ class TestVisualServoActionCameraWarmup(_VisualServoTestMixin, unittest.TestCase
         self.assertIsInstance(action.error(), RuntimeError)
 
 
+# ---------------------------------------------------------------------------
+# Eye-to-hand (PBVS)
+# ---------------------------------------------------------------------------
+
+_ETH_EXTRINSIC = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.5],
+    [0.0, 0.0, 0.0, 1.0],
+]
+_ETH_TARGET_3D = [[0.0, 0.0, 0.0]]
+
+
+class TestVisualServoActionEyeToHandInit(_VisualServoTestMixin, unittest.TestCase):
+    """Tests for eye_to_hand construction validation."""
+
+    def test_missing_extrinsic_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            VisualServoAction(
+                self._controller, "robot", "camera",
+                list(_TARGET_KPS), 10.0, 3,
+                camera_config="eye_to_hand",
+                target_keypoints_3d=_ETH_TARGET_3D,
+            )
+
+    def test_missing_target_3d_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            VisualServoAction(
+                self._controller, "robot", "camera",
+                list(_TARGET_KPS), 10.0, 3,
+                camera_config="eye_to_hand",
+                camera_extrinsic=_ETH_EXTRINSIC,
+            )
+
+    def test_eye_in_hand_default_no_error(self):
+        action = self._make()
+        self.assertEqual(action.parameters()["camera_config"], "eye_in_hand")
+
+
+class TestVisualServoActionEyeToHandParameters(_VisualServoTestMixin, unittest.TestCase):
+    """Tests for eye_to_hand parameters()."""
+
+    def _setup_controller(self):
+        def _execute(device, method, *args, **kwargs):
+            if method == "get_color_frame":
+                return _ZERO_FRAME
+            if method == "get_depth_frame":
+                return np.zeros((480, 640), dtype=np.uint16)
+            if method == "pixel_to_world":
+                return (0.1, 0.05, 0.5)
+            if method == "tpos":
+                return (0, [0.0] * 6)
+            return True
+        self._controller.execute.side_effect = _execute
+
+    def _make_eth(self, **overrides):
+        defaults = dict(
+            controller=self._controller,
+            robot_device="robot",
+            camera_device="camera",
+            target_keypoints=list(_TARGET_KPS),
+            error_threshold=10.0,
+            stable_ticks=3,
+            cmd_period=0.001,
+            timeout=2.0,
+            camera_config="eye_to_hand",
+            camera_extrinsic=_ETH_EXTRINSIC,
+            target_keypoints_3d=_ETH_TARGET_3D,
+        )
+        defaults.update(overrides)
+        return VisualServoAction(**defaults)
+
+    def test_parameters_includes_camera_config(self):
+        self.assertEqual(
+            self._make_eth().parameters()["camera_config"], "eye_to_hand"
+        )
+
+
+class TestVisualServoActionEyeToHandCompute(_VisualServoTestMixin, unittest.TestCase):
+    """Unit tests for _compute_3d_correction."""
+
+    def _setup_controller(self):
+        def _execute(device, method, *args, **kwargs):
+            if method == "get_color_frame":
+                return _ZERO_FRAME
+            if method == "get_depth_frame":
+                return np.zeros((480, 640), dtype=np.uint16)
+            if method == "pixel_to_world":
+                return (0.1, 0.05, 0.5)
+            if method == "tpos":
+                return (0, [0.0] * 6)
+            return True
+        self._controller.execute.side_effect = _execute
+
+    def _make_eth(self, **overrides):
+        defaults = dict(
+            controller=self._controller,
+            robot_device="robot",
+            camera_device="camera",
+            target_keypoints=list(_TARGET_KPS),
+            error_threshold=10.0,
+            stable_ticks=3,
+            cmd_period=0.001,
+            timeout=2.0,
+            camera_config="eye_to_hand",
+            camera_extrinsic=_ETH_EXTRINSIC,
+            target_keypoints_3d=_ETH_TARGET_3D,
+        )
+        defaults.update(overrides)
+        return VisualServoAction(**defaults)
+
+    def test_compute_3d_correction_base_frame_transform(self):
+        # pixel_to_world returns (0.1, 0.05, 0.5) in camera frame.
+        # _ETH_EXTRINSIC translates Z by +0.5, so base Z = 0.5 + 0.5 = 1.0.
+        # target = [0.0, 0.0, 0.0], so delta = (0.1, 0.05, 1.0).
+        action = self._make_eth()
+        self._mock_model.return_value = _make_yolo_result([[100.0, 100.0]], [0.9])
+        yolo_results = self._mock_model(_ZERO_FRAME)
+        dx, dy, dz = action._compute_3d_correction(_ZERO_FRAME, yolo_results)
+        self.assertAlmostEqual(dx, 0.1, places=4)
+        self.assertAlmostEqual(dy, 0.05, places=4)
+        self.assertAlmostEqual(dz, 1.0, places=4)
+
+    def test_compute_3d_correction_no_depth_returns_zero(self):
+        def _execute(device, method, *args, **kwargs):
+            if method == "get_color_frame":
+                return _ZERO_FRAME
+            if method == "get_depth_frame":
+                return np.zeros((480, 640), dtype=np.uint16)
+            if method == "pixel_to_world":
+                return None
+            if method == "tpos":
+                return (0, [0.0] * 6)
+            return True
+        self._controller.execute.side_effect = _execute
+        action = self._make_eth()
+        self._mock_model.return_value = _make_yolo_result([[100.0, 100.0]], [0.9])
+        yolo_results = self._mock_model(_ZERO_FRAME)
+        self.assertEqual(action._compute_3d_correction(_ZERO_FRAME, yolo_results), (0.0, 0.0, 0.0))
+
+    def test_compute_3d_correction_no_detection_returns_zero(self):
+        action = self._make_eth()
+        self._mock_model.return_value = _make_empty_result()
+        yolo_results = self._mock_model(_ZERO_FRAME)
+        self.assertEqual(action._compute_3d_correction(_ZERO_FRAME, yolo_results), (0.0, 0.0, 0.0))
+
+
+class TestVisualServoActionEyeToHandDispatch(_VisualServoTestMixin, unittest.TestCase):
+    """Tests for eye_to_hand servo dispatch."""
+
+    def _setup_controller(self):
+        def _execute(device, method, *args, **kwargs):
+            if method == "get_color_frame":
+                return _ZERO_FRAME
+            if method == "get_depth_frame":
+                return np.zeros((480, 640), dtype=np.uint16)
+            if method == "pixel_to_world":
+                return (0.0, 0.0, 0.5)
+            if method == "tpos":
+                return (0, [0.0] * 6)
+            if method == "get_joint_pos":
+                return (0, [0.0] * 6)
+            return True
+        self._controller.execute.side_effect = _execute
+
+    def _make_eth(self, **overrides):
+        defaults = dict(
+            controller=self._controller,
+            robot_device="robot",
+            camera_device="camera",
+            target_keypoints=list(_TARGET_KPS),
+            error_threshold=10.0,
+            stable_ticks=3,
+            cmd_period=0.001,
+            timeout=0.3,
+            camera_config="eye_to_hand",
+            camera_extrinsic=_ETH_EXTRINSIC,
+            target_keypoints_3d=_ETH_TARGET_3D,
+        )
+        defaults.update(overrides)
+        return VisualServoAction(**defaults)
+
+    def test_eye_to_hand_calls_servo_c_not_servo_j(self):
+        action = self._make_eth()
+        action.start()
+        action.wait(timeout=3.0)
+        calls = self._controller.execute.call_args_list
+        j_calls = [c for c in calls if c[0][1] == "servo_j"]
+        c_calls = [c for c in calls if c[0][1] == "servo_c"]
+        self.assertEqual(len(j_calls), 0)
+        self.assertGreater(len(c_calls), 0)
+
+    def test_eye_in_hand_regression_still_uses_servo_j(self):
+        # eye_in_hand with zero gain — servo_j is called (not servo_c)
+        action = self._make(gain_matrix=[[0.0, 0.0]] * 6, timeout=0.1)
+        action.start()
+        action.wait(timeout=3.0)
+        calls = self._controller.execute.call_args_list
+        methods = [c[0][1] for c in calls]
+        self.assertIn("servo_j", methods)
+        self.assertNotIn("servo_c", methods)
+
+
 if __name__ == "__main__":
     unittest.main()

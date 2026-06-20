@@ -66,6 +66,10 @@ class VisualServoAction(BaseAction):
         warmup_timeout: float = 3.0,
         keypoint_conf_min: float = 0.5,
         servo_space: str = "joint",
+        camera_config: str = "eye_in_hand",
+        camera_extrinsic: list[list[float]] | None = None,
+        target_keypoints_3d: list[list[float]] | None = None,
+        servo_gain_3d: float = 0.5,
     ) -> None:
         """! Load the YOLO model and store servo parameters.
 
@@ -90,6 +94,19 @@ class VisualServoAction(BaseAction):
             include a keypoint in the error computation.
         @param servo_space<str>: "joint" (default) or "cart".  Selects whether
             corrections are applied via servo_j or servo_c.
+        @param camera_config<str>: "eye_in_hand" (default) — existing IBVS
+            gain_matrix approach.  "eye_to_hand" — PBVS: pixel_to_world +
+            camera_extrinsic gives base-frame 3D error applied as a TCP
+            correction via servo_c.
+        @param camera_extrinsic<list[list[float]]|None>: 4×4 T_cam_to_base
+            homogeneous transform; required when camera_config == "eye_to_hand".
+        @param target_keypoints_3d<list[list[float]]|None>: Desired 3D keypoint
+            positions [[X, Y, Z], ...] in base frame (metres); required for
+            "eye_to_hand".
+        @param servo_gain_3d<float>: Scalar gain in [0, 1] applied to the mean
+            3D error vector.  Default 0.5.
+        @raises ValueError: If camera_config == "eye_to_hand" and
+            camera_extrinsic or target_keypoints_3d is None.
         """
         super().__init__(controller)
         self._robot_device = robot_device
@@ -103,6 +120,19 @@ class VisualServoAction(BaseAction):
         self._warmup_timeout = warmup_timeout
         self._keypoint_conf_min = keypoint_conf_min
         self._servo_space = servo_space
+        if camera_config == "eye_to_hand":
+            if camera_extrinsic is None or target_keypoints_3d is None:
+                raise ValueError(
+                    "eye_to_hand requires camera_extrinsic and target_keypoints_3d"
+                )
+        self._camera_config = camera_config
+        self._camera_extrinsic = (
+            np.array(camera_extrinsic, dtype=np.float64)
+            if camera_extrinsic is not None
+            else None
+        )
+        self._target_keypoints_3d = target_keypoints_3d
+        self._servo_gain_3d = servo_gain_3d
         self._model = YOLO(model_name)
         self._model_name = model_name
 
@@ -120,6 +150,7 @@ class VisualServoAction(BaseAction):
             "timeout": self._timeout,
             "model_name": self._model_name,
             "servo_space": self._servo_space,
+            "camera_config": self._camera_config,
         }
 
     # =========================================================================
@@ -138,6 +169,20 @@ class VisualServoAction(BaseAction):
             raise RuntimeError(
                 f"No frame received from camera '{self._camera_device}'"
             )
+
+        if self._camera_config == "eye_to_hand":
+            self._servo_space = "cart"
+            depth_deadline = time.monotonic() + self._warmup_timeout
+            while True:
+                if self._call(self._camera_device, "get_depth_frame") is not None:
+                    break
+                if time.monotonic() >= depth_deadline:
+                    raise RuntimeError(
+                        f"No depth frame received from camera '{self._camera_device}'"
+                    )
+                if not self._checkpoint():
+                    return {"converged": False, "stable_ticks": 0, "final_error": math.inf}
+                time.sleep(0.05)
 
         self._call(self._robot_device, "servo_start")
 
@@ -158,7 +203,11 @@ class VisualServoAction(BaseAction):
         while True:
             frame = self._call(self._camera_device, "get_color_frame")
             if frame is not None:
-                error, mean_ex, mean_ey = self._compute_error(frame)
+                if self._camera_config == "eye_to_hand":
+                    yolo_results = self._model(frame, verbose=False)
+                    error, mean_ex, mean_ey = self._compute_error(frame, yolo_results)
+                else:
+                    error, mean_ex, mean_ey = self._compute_error(frame)
 
                 if error < self._error_threshold:
                     stable_counter += 1
@@ -177,17 +226,25 @@ class VisualServoAction(BaseAction):
                     )
 
                 if not math.isinf(error):
-                    delta = [
-                        self._gain_matrix[i][0] * mean_ex
-                        + self._gain_matrix[i][1] * mean_ey
-                        for i in range(6)
-                    ]
-                    if self._servo_space == "cart":
-                        pose = [p + d for p, d in zip(pose, delta)]
-                        self._call(self._robot_device, "servo_c", pose, self._cmd_period)
+                    if self._camera_config == "eye_to_hand":
+                        dx, dy, dz = self._compute_3d_correction(frame, yolo_results)
+                        if dx != 0.0 or dy != 0.0 or dz != 0.0:
+                            pose[0] += dx * 1000.0 * self._servo_gain_3d
+                            pose[1] += dy * 1000.0 * self._servo_gain_3d
+                            pose[2] += dz * 1000.0 * self._servo_gain_3d
+                            self._call(self._robot_device, "servo_c", pose, self._cmd_period)
                     else:
-                        joint_pos = [jp + dj for jp, dj in zip(joint_pos, delta)]
-                        self._call(self._robot_device, "servo_j", joint_pos, self._cmd_period)
+                        delta = [
+                            self._gain_matrix[i][0] * mean_ex
+                            + self._gain_matrix[i][1] * mean_ey
+                            for i in range(6)
+                        ]
+                        if self._servo_space == "cart":
+                            pose = [p + d for p, d in zip(pose, delta)]
+                            self._call(self._robot_device, "servo_c", pose, self._cmd_period)
+                        else:
+                            joint_pos = [jp + dj for jp, dj in zip(joint_pos, delta)]
+                            self._call(self._robot_device, "servo_j", joint_pos, self._cmd_period)
 
             if not self._checkpoint():
                 break
@@ -222,7 +279,7 @@ class VisualServoAction(BaseAction):
             time.sleep(0.05)
 
     def _compute_error(
-        self, frame: np.ndarray
+        self, frame: np.ndarray, yolo_results=None
     ) -> tuple[float, float, float]:
         """! Run YOLO on a frame and compute the mean pixel error vs. target.
 
@@ -230,10 +287,11 @@ class VisualServoAction(BaseAction):
         keypoint_conf_min are excluded.
 
         @param frame<np.ndarray>: BGR camera frame.
+        @param yolo_results: Pre-computed YOLO output; runs inference if None.
         @return<tuple[float, float, float]>: (error, mean_ex, mean_ey).
             error is inf when no valid keypoints are available.
         """
-        results = self._model(frame, verbose=False)
+        results = yolo_results if yolo_results is not None else self._model(frame, verbose=False)
         result = results[0]
 
         if result.boxes is None or not result.boxes.conf.tolist():
@@ -255,3 +313,52 @@ class VisualServoAction(BaseAction):
         mean_ey = sum(cur[1] - tgt[1] for cur, tgt in pairs) / len(pairs)
         error = math.sqrt(mean_ex ** 2 + mean_ey ** 2)
         return error, mean_ex, mean_ey
+
+    def _compute_3d_correction(
+        self, frame: np.ndarray, yolo_results=None
+    ) -> tuple[float, float, float]:
+        """! Compute mean 3D correction vector from detected keypoints to target.
+
+        Lifts each valid YOLO keypoint to the camera frame via pixel_to_world,
+        transforms to the base frame via camera_extrinsic, and returns the mean
+        offset to target_keypoints_3d.  Keypoints with no depth are skipped.
+
+        @param frame<np.ndarray>: BGR camera frame.
+        @param yolo_results: Pre-computed YOLO output; runs inference if None.
+        @return<tuple[float, float, float]>: Mean (dx, dy, dz) in base frame
+            metres (detected − target).  Returns (0.0, 0.0, 0.0) when no valid
+            keypoints are available.
+        """
+        results = yolo_results if yolo_results is not None else self._model(frame, verbose=False)
+        result = results[0]
+
+        if result.boxes is None or not result.boxes.conf.tolist():
+            return 0.0, 0.0, 0.0
+
+        kp_xy = result.keypoints.xy.tolist()[0]
+        kp_conf = result.keypoints.conf.tolist()[0]
+
+        deltas = []
+        n_kp = min(len(kp_xy), len(self._target_keypoints_3d))
+        for i in range(n_kp):
+            if kp_conf[i] < self._keypoint_conf_min:
+                continue
+            u = int(round(kp_xy[i][0]))
+            v = int(round(kp_xy[i][1]))
+            cam_pt = self._call(self._camera_device, "pixel_to_world", u, v)
+            if cam_pt is None:
+                continue
+            p_cam = np.array([cam_pt[0], cam_pt[1], cam_pt[2], 1.0])
+            p_base = self._camera_extrinsic @ p_cam
+            tgt = self._target_keypoints_3d[i]
+            deltas.append((p_base[0] - tgt[0], p_base[1] - tgt[1], p_base[2] - tgt[2]))
+
+        if not deltas:
+            return 0.0, 0.0, 0.0
+
+        n = len(deltas)
+        return (
+            sum(d[0] for d in deltas) / n,
+            sum(d[1] for d in deltas) / n,
+            sum(d[2] for d in deltas) / n,
+        )
