@@ -265,12 +265,8 @@ class _CameraPanel(QWidget):
 
         self._widgets: dict[str, _CameraWidget] = {}
         for name in camera_names:
-            header = QLabel(name)
-            header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            header.setStyleSheet("font-weight: bold; font-size: 12px;")
             widget = _CameraWidget()
             self._widgets[name] = widget
-            layout.addWidget(header)
             layout.addWidget(widget, stretch=1)
 
         self._timer = QTimer()
@@ -331,7 +327,7 @@ class MuJoCoWindow(QMainWindow):
             self._camera_panel = None
             self.setCentralWidget(self._viewport)
 
-        self.setWindowTitle("SmartRoBox — MuJoCo Viewer")
+        self.setWindowTitle("SMARTROBOX")
         self.showMaximized()
         self._sim_thread = _SimThread(self._model, self._data, self)
         self._sim_thread.start()
