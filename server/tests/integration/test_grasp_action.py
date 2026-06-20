@@ -26,7 +26,7 @@ from app.config import Config
 from app.controller import Controller
 
 
-_OPEN_POSE = [0] * 6
+_OPEN_POSE = [255] * 6
 _TORQUE_LIMIT = 180
 _MOVEMENT_DELAY = 2.0
 _GRASP_TIMEOUT = 10.0

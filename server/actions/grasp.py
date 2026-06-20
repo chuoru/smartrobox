@@ -13,14 +13,15 @@
 from actions.base import BaseAction
 from app.controller import Controller
 
-_HALF = 128  # half-closed position value (0–255)
-_FULL = 255  # fully-closed position value (0–255)
+_HALF = 128    # half-closed position value (O6: 128 = midpoint)
+_CLOSED = 0    # fully-closed position value (O6: 0 = bent/closed)
+_OPEN = 255    # fully-open position value  (O6: 255 = extended/open)
 
 
 class GraspAction(BaseAction):
     """! Action that drives a LinkerBot hand through a two-phase grasp sequence.
 
-    Phase 1 (prepare): thumb abduction in, selected fingers half-closed.
+    Phase 1 (prepare): thumb adduction in, selected fingers half-closed.
     Phase 2 (grasp):   thumb pitch in, selected fingers fully closed.
 
     Grasp levels determine which fingers participate:
@@ -118,18 +119,18 @@ class GraspAction(BaseAction):
 
         @return<tuple[list[int], list[int]]>: (prepare_pose, grasp_pose), each length 6.
         """
-        prepare = [0] * 6
-        grasp = [0] * 6
+        prepare = [_OPEN] * 6
+        grasp = [_OPEN] * 6
 
-        # Thumb abduction in for both phases; thumb pitch closes during grasp
-        prepare[1] = _FULL  # thumb_cmc_yaw
-        grasp[0] = _FULL    # thumb_cmc_pitch
-        grasp[1] = _FULL    # thumb_cmc_yaw
+        # Thumb adduction in for both phases; thumb pitch closes during grasp
+        prepare[1] = _CLOSED  # thumb_cmc_yaw
+        grasp[0] = _CLOSED    # thumb_cmc_pitch
+        grasp[1] = _CLOSED    # thumb_cmc_yaw
 
         fingers = self._FINGER_INDICES_BY_LEVEL[self._grasp_level]
         for idx in fingers:
             if self._grasp_level < 4:
                 prepare[idx] = _HALF
-            grasp[idx] = _FULL
+            grasp[idx] = _CLOSED
 
         return prepare, grasp
