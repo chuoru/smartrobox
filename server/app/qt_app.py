@@ -216,7 +216,7 @@ class _CameraWidget(QLabel):
         self.setPixmap(
             pixmap.scaled(
                 self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
@@ -231,7 +231,7 @@ class _CameraWidget(QLabel):
             self.setPixmap(
                 self._last_pixmap.scaled(
                     self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
